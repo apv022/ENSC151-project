@@ -1,0 +1,12 @@
+build/
+cmake-build-*/
+.vscode/
+.idea/
+*.o
+*.obj
+*.exe
+*.app
+*.DS_Store
+*.hex
+*.elf
+*.map
