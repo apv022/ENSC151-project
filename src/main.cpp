@@ -211,11 +211,6 @@ void HandleAction(Game& game, Action action, SerialPort* serial) {
     if (game.screen != ScreenState::Playing) {
         return; // Actions outside a run do not affect bird physics or prompt statistics.
     }
-
-    if (action == Action::Button) {
-        game.birdVelocity = FlapVelocity; // Button always flaps, even when no button prompt is active.
-    }
-
     Obstacle* active = FindActivePrompt(game); // Resolve at most the currently visible prompt.
     if (active == nullptr) {
         return; // An early/late sensor event cannot accidentally count for a future prompt.
@@ -623,20 +618,30 @@ int main(int argc, char** argv) {
         if (IsKeyPressed(KEY_ESCAPE)) {
             running = false; // Escape exits from any screen without changing the run result.
         }
+if (serialConnected) {
+    const std::vector<std::string> serialLines = serial.ReadLines();
 
-        if (serialConnected) {
-            const std::vector<std::string> serialLines = serial.ReadLines(); // Collect events before state-specific input.
-            if (game.screen == ScreenState::Playing) {
-                for (const std::string& line : serialLines) { // Route only events received during active gameplay.
-                    Action hardwareAction = Action::Button; // Temporary output populated for recognized event lines.
-                    if (ParseSerialAction(line, hardwareAction)) {
-                        HandleAction(game, hardwareAction, &serial); // Treat physical and keyboard actions identically.
-                    }
-                }
+    for (const std::string& line : serialLines) {
+        Action hardwareAction = Action::Button;
+
+        if (ParseSerialAction(line, hardwareAction)) {
+
+            if ((game.screen == ScreenState::Title ||
+                 game.screen == ScreenState::GameOver) &&
+                 hardwareAction == Action::Button) {
+
+                StartGame(game);
+
+            } else if (game.screen == ScreenState::Playing) {
+
+                HandleAction(game, hardwareAction, &serial);
+
             }
-            serialConnected = serial.IsOpen(); // Detect unplugging/errors on every screen, not just gameplay.
         }
+    }
 
+    serialConnected = serial.IsOpen();
+}
         if (game.screen == ScreenState::Title) {
             if (IsKeyPressed(KEY_ONE)) {
                 SetDifficulty(game, false); // Select relaxed speed and a wider safe gap.
@@ -653,7 +658,7 @@ int main(int argc, char** argv) {
             }
         } else {
             if (IsKeyPressed(KEY_SPACE) || IsKeyPressed(KEY_UP)) {
-                HandleAction(game, Action::Button, serialConnected ? &serial : nullptr); // Keyboard flap/button prompt.
+            game.birdVelocity = FlapVelocity; 
             }
             if (IsKeyPressed(KEY_Y)) {
                 HandleAction(game, Action::Sound, serialConnected ? &serial : nullptr); // Simulate sound sensor event.
@@ -675,6 +680,10 @@ int main(int argc, char** argv) {
         }
         EndDrawing(); // Present the completed frame to the window.
     }
+
+    CloseWindow(); // Release Raylib display/audio/input resources before process exit.
+    return 0; // Report normal completion to the operating system.
+}
 
     CloseWindow(); // Release Raylib display/audio/input resources before process exit.
     return 0; // Report normal completion to the operating system.
