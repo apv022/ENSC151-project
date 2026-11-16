@@ -14,10 +14,12 @@ Arduino is not connected, which is useful for development and demonstrations.
 
 - Side-scrolling game with bird physics, obstacle gaps, and collision detection.
 - Three prompt types: **PRESS THE BUTTON**, **YELL**, and **COVER THE LIGHT**.
-- Correct prompt answers open that gate and play a positive buzzer tone.
-- Wrong answers, missed prompts, ground/ceiling contact, and closed-gate
-  collisions use a three-life allowance.
+- Correct prompt answers mark that gate green and play a positive buzzer tone.
+- Wrong answers, missed prompts, ground/ceiling contact, and contact with any
+  gate (including a green one) use a three-life allowance.
 - Easy and Challenge presets, with different obstacle speed and gap size.
+- Meadow, Sunset, and Night background themes, selectable on the title screen.
+- Five bird colors, selectable on the title screen.
 - HUD shows score, remaining lives, correct responses, current prompt, average
   correct-response time, and whether the Arduino is connected.
 - Results screen reports correct, incorrect, and missed prompts separately, as
@@ -86,6 +88,8 @@ its CMake package discoverable before configuring.
 | `Enter` | Start / play again | — |
 | `1` | Select Easy on title screen | — |
 | `2` | Select Challenge on title screen | — |
+| `T` | Cycle background theme on title screen | — |
+| `B` | Cycle bird color on title screen | — |
 | `Space` or `Up` | Flap | Button prompt |
 | `Y` | Simulate a sound sensor event | Yell prompt |
 | `C` | Simulate covering the light sensor | Cover prompt |
@@ -199,7 +203,8 @@ and missed prompts are tracked separately.
 - Each gate is assigned one randomly selected prompt.
 - A prompt becomes active while its gate is within the configured lead distance
   of the bird, and ends when the gate passes the bird.
-- A correct answer records a success and marks that gate safe to pass.
+- A correct answer records a success and marks that gate green, but does not
+  prevent a collision penalty if the bird touches a gate column.
 - Correct answers record reaction time from prompt activation to input receipt.
 - The gate passing the bird increments the score.
 - A wrong action during an active prompt closes that prompt, records an incorrect
@@ -207,7 +212,7 @@ and missed prompts are tracked separately.
 - Button presses during sound/light prompts remain flap controls and are not
   treated as incorrect prompt answers.
 - Letting a prompt expire records a miss and costs one life.
-- Contact with a closed gate or the top/bottom playfield boundary costs a life.
+- Contact with any gate or the top/bottom playfield boundary costs a life.
 - The game ends when no lives remain. The result screen keeps wrong and missed
   prompts separate so the run can be evaluated.
 
@@ -226,8 +231,8 @@ frame time, with a safety clamp after long frame stalls.
    correct count increases and the gate changes to its safe color.
 4. Use an incorrect key during a prompt; verify incorrect count and lives change.
 5. Do not answer a prompt; verify the miss count increases after the gate passes.
-6. Hit an obstacle and the screen boundaries; verify collisions reduce lives and
-   the game-over summary appears at zero.
+6. Hit both green and unanswered gate columns, plus the screen boundaries;
+   verify each collision reduces lives and the game-over summary appears at zero.
 7. Restart from the results screen; verify statistics reset and difficulty stays
    selected.
 

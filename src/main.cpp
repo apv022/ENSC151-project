@@ -33,6 +33,20 @@ enum class ScreenState {
     GameOver // Showing the finished run and its summary statistics.
 };
 
+enum class BackgroundTheme {
+    Meadow,
+    Sunset,
+    Night
+};
+
+enum class BirdColor {
+    Gold,
+    Blue,
+    Pink,
+    Purple,
+    Green
+};
+
 enum class Action {
     Button, // Grove button press, or Space/Up on the keyboard.
     Sound, // Sound sensor event, or Y on the keyboard.
@@ -72,6 +86,8 @@ struct Obstacle {
 
 struct Game {
     ScreenState screen = ScreenState::Title; // Current top-level screen/state machine value.
+    BackgroundTheme backgroundTheme = BackgroundTheme::Meadow; // Selected scene, kept across runs.
+    BirdColor birdColor = BirdColor::Gold; // Selected bird color, kept across runs.
     DifficultySettings difficulty{ "Easy", 220.0f, 540.0f, 112.0f, PromptLeadDistance }; // Safe default preset.
     float birdY = ScreenHeight * 0.48f; // Current vertical bird center in pixels.
     float birdVelocity = 0.0f; // Current vertical speed; positive values move downward.
@@ -91,6 +107,78 @@ struct Game {
     std::vector<Obstacle> obstacles; // Active obstacles, ordered from oldest to newest.
     std::mt19937 random{ std::random_device{}() }; // Random engine selects gap positions and prompt types.
 };
+
+/**
+ * @brief Return the display name for a background theme.
+ * @param theme Theme to name.
+ * @return Short label for the title screen.
+ */
+const char* BackgroundThemeName(BackgroundTheme theme) {
+    switch (theme) {
+        case BackgroundTheme::Meadow: return "MEADOW";
+        case BackgroundTheme::Sunset: return "SUNSET";
+        case BackgroundTheme::Night: return "NIGHT";
+    }
+    return "MEADOW";
+}
+
+/**
+ * @brief Advance to the next available background theme.
+ * @param game Game state whose selected theme should change.
+ */
+void CycleBackgroundTheme(Game& game) {
+    switch (game.backgroundTheme) {
+        case BackgroundTheme::Meadow: game.backgroundTheme = BackgroundTheme::Sunset; break;
+        case BackgroundTheme::Sunset: game.backgroundTheme = BackgroundTheme::Night; break;
+        case BackgroundTheme::Night: game.backgroundTheme = BackgroundTheme::Meadow; break;
+    }
+}
+
+/**
+ * @brief Return the display name for a bird color.
+ * @param color Color choice to name.
+ * @return Short label for the title screen.
+ */
+const char* BirdColorName(BirdColor color) {
+    switch (color) {
+        case BirdColor::Gold: return "GOLD";
+        case BirdColor::Blue: return "BLUE";
+        case BirdColor::Pink: return "PINK";
+        case BirdColor::Purple: return "PURPLE";
+        case BirdColor::Green: return "GREEN";
+    }
+    return "GOLD";
+}
+
+/**
+ * @brief Return the body color for a bird color choice.
+ * @param color Color choice to render.
+ * @return Raylib color for the bird's body.
+ */
+Color BirdBodyColor(BirdColor color) {
+    switch (color) {
+        case BirdColor::Gold: return GOLD;
+        case BirdColor::Blue: return Color{ 30, 75, 180, 255 };
+        case BirdColor::Pink: return PINK;
+        case BirdColor::Purple: return VIOLET;
+        case BirdColor::Green: return LIME;
+    }
+    return GOLD;
+}
+
+/**
+ * @brief Advance to the next available bird color.
+ * @param game Game state whose bird color should change.
+ */
+void CycleBirdColor(Game& game) {
+    switch (game.birdColor) {
+        case BirdColor::Gold: game.birdColor = BirdColor::Blue; break;
+        case BirdColor::Blue: game.birdColor = BirdColor::Pink; break;
+        case BirdColor::Pink: game.birdColor = BirdColor::Purple; break;
+        case BirdColor::Purple: game.birdColor = BirdColor::Green; break;
+        case BirdColor::Green: game.birdColor = BirdColor::Gold; break;
+    }
+}
 
 /**
  * @brief Describe the player action required by a prompt.
@@ -352,13 +440,12 @@ void UpdateGame(Game& game, float frameTime, SerialPort* serial) {
         const Rectangle topColumn{ obstacle.x, 0.0f, ObstacleWidth, gapTop }; // Solid upper part of the obstacle.
         const Rectangle bottomColumn{ obstacle.x, gapBottom, ObstacleWidth,
                                       ScreenHeight - GroundHeight - gapBottom }; // Solid lower part of the obstacle.
-        const bool gateWasAnsweredCorrectly = obstacle.result == PromptResult::Correct; // A correct response opens this gate.
         const bool hitColumn = CheckCollisionRecs(birdBounds, topColumn)
             || CheckCollisionRecs(birdBounds, bottomColumn);
-        if (hitColumn && !gateWasAnsweredCorrectly && !obstacle.collisionHandled) {
+        if (hitColumn && !obstacle.collisionHandled) {
             obstacle.collisionHandled = true; // Count only the first overlapping frame as a collision.
             obstacle.result = PromptResult::Failed; // Mark the gate closed after a collision.
-            LoseLife(game, "BUMP! TRY AGAIN!"); // Collision is counted as one mistake for this contact.
+            LoseLife(game, "BUMP! TRY AGAIN!"); // Contact costs a life even after a correct prompt answer.
             if (game.screen != ScreenState::Playing) {
                 return; // Stop as soon as collision loss ends the run.
             }
@@ -405,12 +492,14 @@ void DrawObstacle(const Obstacle& obstacle, const DifficultySettings& difficulty
 /**
  * @brief Draw a friendly bird from Raylib primitives without external assets.
  * @param centerY Vertical center of the bird in the playfield.
+ * @param color Selected body color.
  * @return No value; draws the bird body, wing, beak, and eye.
  */
-void DrawBird(float centerY) {
-    DrawCircle(static_cast<int>(PlayerX), static_cast<int>(centerY), BirdRadius, GOLD); // Main round bird body.
+void DrawBird(float centerY, BirdColor color) {
+    const Color bodyColor = BirdBodyColor(color);
+    DrawCircle(static_cast<int>(PlayerX), static_cast<int>(centerY), BirdRadius, bodyColor); // Main round bird body.
     DrawEllipse(static_cast<int>(PlayerX - 3.0f), static_cast<int>(centerY + 4.0f),
-                8.0f, 5.5f, ORANGE); // Wing gives the simple sprite a bit of character.
+                8.0f, 5.5f, ColorBrightness(bodyColor, -0.25f)); // A darker wing keeps the selected color cohesive.
     DrawTriangle({ PlayerX + 13.0f, centerY - 2.0f }, // Beak tip near the bird's front.
                  { PlayerX + 26.0f, centerY + 2.0f }, // Lower beak point.
                  { PlayerX + 13.0f, centerY + 6.0f }, ORANGE); // Complete the small beak shape.
@@ -424,22 +513,64 @@ void DrawBird(float centerY) {
  * @return No value; draws the background before foreground objects.
  */
 void DrawBackground(const Game& game) {
-    ClearBackground(SKYBLUE); // Fill the entire frame with a calm blue sky.
-    DrawCircle(790, 115, 44.0f, Fade(YELLOW, 0.85f)); // Decorative sun in the upper-right sky.
-    DrawCircle(155, 130, 25.0f, Fade(WHITE, 0.85f)); // First cloud puff.
-    DrawCircle(185, 125, 34.0f, Fade(WHITE, 0.85f)); // Larger middle cloud puff.
-    DrawCircle(218, 134, 23.0f, Fade(WHITE, 0.85f)); // Last cloud puff.
-    DrawCircle(535, 200, 24.0f, Fade(WHITE, 0.65f)); // Second cloud puff.
-    DrawCircle(565, 194, 33.0f, Fade(WHITE, 0.65f)); // Second cloud's middle puff.
-    DrawCircle(598, 205, 22.0f, Fade(WHITE, 0.65f)); // Second cloud's final puff.
+    Color groundColor;
+    Color groundEdgeColor;
+    Color groundMarkColor;
+
+    switch (game.backgroundTheme) {
+        case BackgroundTheme::Meadow:
+            ClearBackground(SKYBLUE);
+            DrawCircle(790, 115, 44.0f, Fade(YELLOW, 0.85f));
+            DrawCircle(155, 130, 25.0f, Fade(WHITE, 0.85f));
+            DrawCircle(185, 125, 34.0f, Fade(WHITE, 0.85f));
+            DrawCircle(218, 134, 23.0f, Fade(WHITE, 0.85f));
+            DrawCircle(535, 200, 24.0f, Fade(WHITE, 0.65f));
+            DrawCircle(565, 194, 33.0f, Fade(WHITE, 0.65f));
+            DrawCircle(598, 205, 22.0f, Fade(WHITE, 0.65f));
+            groundColor = Color{ 218, 190, 112, 255 };
+            groundEdgeColor = Color{ 108, 190, 95, 255 };
+            groundMarkColor = Color{ 189, 160, 91, 255 };
+            break;
+        case BackgroundTheme::Sunset:
+            ClearBackground(Color{ 247, 137, 111, 255 });
+            DrawCircle(755, 245, 70.0f, Fade(Color{ 255, 224, 139, 255 }, 0.95f));
+            DrawTriangle({ 0.0f, 475.0f }, { 250.0f, 290.0f }, { 510.0f, 475.0f },
+                         Color{ 202, 101, 105, 255 });
+            DrawTriangle({ 360.0f, 490.0f }, { 690.0f, 330.0f }, { 960.0f, 490.0f },
+                         Color{ 176, 86, 103, 255 });
+            DrawTriangle({ 0.0f, 520.0f }, { 450.0f, 400.0f }, { 800.0f, 520.0f },
+                         Color{ 128, 77, 103, 255 });
+            groundColor = Color{ 124, 77, 84, 255 };
+            groundEdgeColor = Color{ 220, 126, 91, 255 };
+            groundMarkColor = Color{ 167, 99, 86, 255 };
+            break;
+        case BackgroundTheme::Night:
+            ClearBackground(Color{ 20, 32, 68, 255 });
+            for (int i = 0; i < 18; ++i) {
+                const int starX = 35 + (i * 137) % (ScreenWidth - 70);
+                const int starY = 38 + (i * 83) % 310;
+                DrawCircle(starX, starY, (i % 3 == 0) ? 2.5f : 1.5f, Fade(WHITE, 0.85f));
+            }
+            DrawCircle(780, 125, 43.0f, Color{ 255, 238, 183, 255 });
+            DrawCircle(799, 108, 40.0f, Color{ 20, 32, 68, 255 });
+            DrawTriangle({ 0.0f, 510.0f }, { 255.0f, 340.0f }, { 520.0f, 510.0f },
+                         Color{ 41, 63, 101, 255 });
+            DrawTriangle({ 350.0f, 520.0f }, { 700.0f, 365.0f }, { 960.0f, 520.0f },
+                         Color{ 34, 54, 91, 255 });
+            groundColor = Color{ 27, 40, 67, 255 };
+            groundEdgeColor = Color{ 86, 134, 128, 255 };
+            groundMarkColor = Color{ 54, 77, 98, 255 };
+            break;
+    }
+
     DrawRectangle(0, ScreenHeight - static_cast<int>(GroundHeight), ScreenWidth,
-                  static_cast<int>(GroundHeight), Color{ 218, 190, 112, 255 }); // Ground base.
+                  static_cast<int>(GroundHeight), groundColor);
     DrawRectangle(0, ScreenHeight - static_cast<int>(GroundHeight), ScreenWidth, 10,
-                  Color{ 108, 190, 95, 255 }); // Bright grass strip separates ground and sky.
+                  groundEdgeColor);
     for (int x = -48; x < ScreenWidth + 48; x += 48) { // Tile ground marks across the whole width.
         const int tileX = x - static_cast<int>(game.groundOffset); // Shift tiles for scrolling animation.
         DrawLine(tileX, ScreenHeight - 35, tileX + 24, ScreenHeight - 35,
-                 Color{ 189, 160, 91, 255 }); // Small repeated soil mark indicates movement.
+                 groundMarkColor); // Small repeated soil mark indicates movement.
     }
 }
 
@@ -479,24 +610,31 @@ void DrawHud(Game& game, bool serialConnected) {
 }
 
 /**
- * @brief Draw the title screen and available difficulty/control choices.
- * @param game Current state supplies the selected difficulty label.
+ * @brief Draw the title screen and available difficulty/theme/color/control choices.
+ * @param game Current state supplies the selected difficulty, theme, and bird color.
  * @return No value; draws the title menu.
  */
 void DrawTitle(const Game& game) {
     DrawBackground(game); // Reuse the same setting so menu and game feel connected.
-    DrawRectangle(150, 105, 660, 420, Fade(DARKBLUE, 0.82f)); // Centered title card.
+    DrawRectangle(150, 80, 660, 490, Fade(DARKBLUE, 0.82f)); // Centered title card.
     const char* title = "FOCUSBIRD"; // Project name presented prominently.
     DrawText(title, ScreenWidth / 2 - MeasureText(title, 58) / 2, 137, 58, GOLD); // Large playful heading.
     const char* subtitle = "Fly through the gates. Follow the prompts!"; // One-line explanation for new players.
     DrawText(subtitle, ScreenWidth / 2 - MeasureText(subtitle, 22) / 2, 216, 22, RAYWHITE); // Center the purpose statement.
     DrawText(TextFormat("Selected: %s", game.difficulty.label), ScreenWidth / 2 - 92, 267, 22, WHITE); // Current difficulty.
     DrawText("1  EASY       2  CHALLENGE", ScreenWidth / 2 - 162, 308, 21, LIME); // Keyboard difficulty shortcuts.
-    DrawText("ENTER  START GAME", ScreenWidth / 2 - 132, 356, 23, GOLD); // Start instruction.
-    DrawText("SPACE / UP = flap (button)", 270, 411, 18, RAYWHITE); // Keyboard button fallback.
-    DrawText("Y = yell input       C = cover input", 270, 439, 18, RAYWHITE); // Keyboard sensor fallbacks.
+    DrawText("ENTER  START GAME", ScreenWidth / 2 - 132, 348, 23, GOLD); // Start instruction.
+    const char* backgroundText = TextFormat("T  BACKGROUND: %s", BackgroundThemeName(game.backgroundTheme));
+    DrawText(backgroundText, ScreenWidth / 2 - MeasureText(backgroundText, 19) / 2, 386, 19, SKYBLUE);
+    const char* birdColorText = TextFormat("B  BIRD COLOR: %s", BirdColorName(game.birdColor));
+    DrawText(birdColorText, ScreenWidth / 2 - MeasureText(birdColorText, 19) / 2, 416, 19,
+             BirdBodyColor(game.birdColor));
+    DrawCircle(670, 425, 10.0f, BirdBodyColor(game.birdColor)); // Preview the selected bird color.
+    DrawCircleLines(670, 425, 10.0f, RAYWHITE);
+    DrawText("SPACE / UP = flap (button)", 270, 449, 18, RAYWHITE); // Keyboard button fallback.
+    DrawText("Y = yell input       C = cover input", 270, 476, 18, RAYWHITE); // Keyboard sensor fallbacks.
     DrawText("Arduino events are accepted only during the matching prompt.",
-             207, 481, 17, LIGHTGRAY); // Clarify timing and input matching.
+             207, 510, 17, LIGHTGRAY); // Clarify timing and input matching.
 }
 
 /**
@@ -510,7 +648,7 @@ void DrawPlaying(Game& game, bool serialConnected) {
     for (const Obstacle& obstacle : game.obstacles) { // Paint each active gate behind the bird.
         DrawObstacle(obstacle, game.difficulty); // Gate color and icon communicate its state/type.
     }
-    DrawBird(game.birdY); // Fixed-x bird is drawn after obstacles for clear overlap visibility.
+    DrawBird(game.birdY, game.birdColor); // Fixed-x bird is drawn after obstacles for clear overlap visibility.
     DrawHud(game, serialConnected); // Add score, lives, hardware status, and active prompt.
 }
 
@@ -643,6 +781,12 @@ int main(int argc, char** argv) {
             }
             if (IsKeyPressed(KEY_TWO)) {
                 SetDifficulty(game, true); // Select faster obstacles and a smaller safe gap.
+            }
+            if (IsKeyPressed(KEY_T)) {
+                CycleBackgroundTheme(game); // Preview a different scene before starting.
+            }
+            if (IsKeyPressed(KEY_B)) {
+                CycleBirdColor(game); // Preview the next bird color before starting.
             }
             if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER)) {
                 StartGame(game); // Begin after the user has selected a difficulty.
