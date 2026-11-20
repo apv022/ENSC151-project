@@ -6,13 +6,13 @@ Works the same on Windows, macOS, and Linux:
     python run-focusbird.py              # build, upload firmware, play with the Grove kit
     python run-focusbird.py --keyboard   # build and play with the keyboard only
     python run-focusbird.py --no-upload  # reuse the firmware already on the board
+    python run-focusbird.py --build-only # just compile the game
 
 If no board (or no Arduino CLI) is found, it offers to start in keyboard mode
 instead of failing.
 """
 
 import argparse
-import glob
 import hashlib
 import json
 import os
@@ -77,45 +77,21 @@ def pause_if_double_clicked():
 
 
 def find_arduino_cli():
-    """Find arduino-cli on PATH or bundled inside an Arduino IDE 2 install."""
+    """Find arduino-cli on PATH, in ~/.local/bin, or bundled inside Arduino IDE 2."""
     found = shutil.which("arduino-cli")
     if found:
         return found
-
-    candidates = []
+    bundled = Path("resources") / "app" / "lib" / "backend" / "resources"
     if IS_WINDOWS:
-        for base in (
-            os.environ.get("LOCALAPPDATA", ""),
-            os.environ.get("ProgramFiles", r"C:\Program Files"),
-            os.environ.get("ProgramFiles(x86)", ""),
-        ):
-            if base:
-                candidates += [
-                    Path(base) / "Programs" / "Arduino IDE" / "resources" / "app" / "lib"
-                    / "backend" / "resources" / "arduino-cli.exe",
-                    Path(base) / "Arduino IDE" / "resources" / "app" / "lib" / "backend"
-                    / "resources" / "arduino-cli.exe",
-                ]
-        candidates += [Path(p) for p in glob.glob(
-            os.path.expandvars(r"%LOCALAPPDATA%\Microsoft\WinGet\Packages\ArduinoSA.CLI*\arduino-cli.exe")
-        )]
+        candidates = [
+            Path(os.environ.get("LOCALAPPDATA", "")) / "Programs" / "Arduino IDE" / bundled / "arduino-cli.exe",
+            Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Arduino IDE" / bundled / "arduino-cli.exe",
+        ]
     elif IS_MAC:
-        for app in ("/Applications", str(Path.home() / "Applications")):
-            candidates.append(
-                Path(app) / "Arduino IDE.app" / "Contents" / "Resources" / "app" / "lib"
-                / "backend" / "resources" / "arduino-cli"
-            )
+        candidates = [Path("/Applications/Arduino IDE.app/Contents/Resources/app/lib/backend/resources/arduino-cli")]
     else:
-        candidates += [Path(p) for p in glob.glob(
-            "/opt/*rduino*/resources/app/lib/backend/resources/arduino-cli"
-        )]
-        candidates.append(Path.home() / "bin" / "arduino-cli")
-        candidates.append(Path.home() / ".local" / "bin" / "arduino-cli")
-
-    for candidate in candidates:
-        if candidate.is_file():
-            return str(candidate)
-    return None
+        candidates = [Path.home() / ".local" / "bin" / "arduino-cli"]
+    return next((str(c) for c in candidates if c.is_file()), None)
 
 
 def arduino_cli_install_hint():
@@ -169,12 +145,7 @@ def build_game(cmake):
     out = build_dir()
     configure = [cmake, "-S", ROOT, "-B", out, "-DCMAKE_BUILD_TYPE=Release"]
     if IS_WINDOWS and not (out / "CMakeCache.txt").exists() and not os.environ.get("CMAKE_GENERATOR"):
-        # Pick the Visual Studio generator explicitly with x64 so the build works
-        # from a normal PowerShell/cmd window, not only a Developer prompt.
-        if shutil.which("cl") is None and shutil.which("g++") and shutil.which("mingw32-make"):
-            configure += ["-G", "MinGW Makefiles"]
-        else:
-            configure += ["-A", "x64"]
+        configure += ["-A", "x64"]  # 64-bit Visual Studio build; works from a normal PowerShell window.
     try:
         run(configure)
         run([cmake, "--build", out, "--config", "Release", "--parallel"])
@@ -333,11 +304,16 @@ def main():
                         help="skip the Arduino entirely and play with the keyboard")
     parser.add_argument("--no-upload", action="store_true",
                         help="connect to the board without re-uploading the firmware")
+    parser.add_argument("--build-only", action="store_true",
+                        help="build the game and stop (no Arduino, no launch)")
     args = parser.parse_args()
 
     info(f"FocusBird launcher on {platform.system()} ({platform.machine()})")
     cmake = require_cmake()
     game = build_game(cmake)
+    if args.build_only:
+        info(f"\nBuilt {game}")
+        return 0
 
     port = None
     if not args.keyboard:

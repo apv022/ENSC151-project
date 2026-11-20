@@ -14,27 +14,7 @@
 #include <unistd.h>
 #endif
 
-namespace {
-
-/**
- * @brief Convert the configured baud value into the POSIX termios constant.
- * @param baudRate Requested serial speed.
- * @return Matching termios constant, or B115200 for unsupported values.
- */
-#ifndef _WIN32
-speed_t ToTermiosBaud(unsigned int baudRate) {
-    switch (baudRate) {
-        case 9600: return B9600;
-        case 19200: return B19200;
-        case 38400: return B38400;
-        case 57600: return B57600;
-        case 115200: return B115200;
-        default: return B115200;
-    }
-}
-#endif
-
-} // namespace
+constexpr unsigned int BaudRate = 115200; // Must match Serial.begin() in the Arduino sketch.
 
 /**
  * @brief Construct a serial wrapper with no device open.
@@ -57,10 +37,9 @@ SerialPort::~SerialPort() {
 /**
  * @brief Open and configure a serial device for non-blocking newline messages.
  * @param portName Device path or COM port supplied by the command line.
- * @param baudRate Baud rate shared with the Arduino sketch.
  * @return true after successful setup; false if opening/configuration fails.
  */
-bool SerialPort::Open(const std::string& portName, unsigned int baudRate) {
+bool SerialPort::Open(const std::string& portName) {
     Close(); // Reopening first releases any previous device and stale partial line.
 
 #ifdef _WIN32
@@ -82,7 +61,7 @@ bool SerialPort::Open(const std::string& portName, unsigned int baudRate) {
         CloseHandle(device); // Release the port if configuration cannot be inspected.
         return false;
     }
-    settings.BaudRate = baudRate; // Match the Arduino serial speed.
+    settings.BaudRate = BaudRate; // Match the Arduino serial speed.
     settings.ByteSize = 8; // Use eight data bits for each transmitted byte.
     settings.Parity = NOPARITY; // Disable parity for the agreed 8-N-1 protocol.
     settings.StopBits = ONESTOPBIT; // Use one stop bit after each byte.
@@ -130,9 +109,9 @@ bool SerialPort::Open(const std::string& portName, unsigned int baudRate) {
         return false;
     }
     cfmakeraw(&settings); // Disable line processing so bytes arrive exactly as sent.
-    const speed_t speed = ToTermiosBaud(baudRate); // Select a supported POSIX baud constant.
-    cfsetispeed(&settings, speed); // Set the incoming data rate.
-    cfsetospeed(&settings, speed); // Set the outgoing data rate.
+    static_assert(BaudRate == 115200, "update B115200 below to match BaudRate");
+    cfsetispeed(&settings, B115200); // Set the incoming data rate.
+    cfsetospeed(&settings, B115200); // Set the outgoing data rate.
     settings.c_cflag |= (CLOCAL | CREAD); // Ignore modem-control lines and enable reception.
     settings.c_cflag &= ~CSTOPB; // Select one stop bit.
     settings.c_cflag &= ~PARENB; // Disable parity bits.

@@ -27,12 +27,11 @@ public:
     ~SerialPort();
 
     /**
-     * @brief Open a serial device and configure it for 8-N-1 communication.
+     * @brief Open a serial device and configure it for 115200 baud, 8-N-1.
      * @param portName Device path such as /dev/ttyACM0 or COM3.
-     * @param baudRate Communication speed; FocusBird uses 115200 baud.
      * @return true if the device opened and was configured, otherwise false.
      */
-    bool Open(const std::string& portName, unsigned int baudRate = 115200);
+    bool Open(const std::string& portName);
 
     /**
      * @brief Close the device and clear any partial incoming message.

@@ -1,0 +1,43 @@
+name: build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  game:
+    name: game (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+      - name: Install Linux packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libx11-dev libxrandr-dev libxi-dev \
+            libxcursor-dev libxinerama-dev libgl1-mesa-dev xvfb
+      - name: Build with the launcher
+        run: python run-focusbird.py --build-only
+      - name: Smoke-test the game window (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          exe=$(find build -name focusbird -type f -perm -u+x | head -n1)
+          "$exe" --help
+          status=0; xvfb-run -a timeout 5 "$exe" || status=$?
+          test "$status" -eq 124  # still running when timeout stopped it = no crash
+
+  firmware:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: arduino/setup-arduino-cli@v2
+      - run: arduino-cli core update-index && arduino-cli core install arduino:avr
+      - run: arduino-cli compile --fqbn arduino:avr:uno --warnings all arduino/focusbird

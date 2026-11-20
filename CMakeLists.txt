@@ -12,24 +12,16 @@ find_package(raylib 5.0 QUIET)
 
 if(NOT raylib_FOUND)
     include(FetchContent)
+    if(POLICY CMP0135)
+        cmake_policy(SET CMP0135 NEW) # Use extraction time for downloaded files.
+    endif()
     set(BUILD_EXAMPLES OFF CACHE BOOL "Do not build raylib examples" FORCE)
     set(BUILD_GAMES OFF CACHE BOOL "Do not build raylib games" FORCE)
-    # Clone with Git when it is available; otherwise download a source tarball
-    # so a machine without Git (e.g. a ZIP download on Windows) still builds.
-    find_package(Git QUIET)
-    if(GIT_FOUND)
-        FetchContent_Declare(
-            raylib
-            GIT_REPOSITORY https://github.com/raysan5/raylib.git
-            GIT_TAG 5.5
-            GIT_SHALLOW TRUE
-        )
-    else()
-        FetchContent_Declare(
-            raylib
-            URL https://github.com/raysan5/raylib/archive/refs/tags/5.5.tar.gz
-        )
-    endif()
+    # A source archive needs no Git install (handy for ZIP downloads on Windows).
+    FetchContent_Declare(
+        raylib
+        URL https://github.com/raysan5/raylib/archive/refs/tags/5.5.tar.gz
+    )
     FetchContent_MakeAvailable(raylib)
 endif()
 
@@ -45,8 +37,6 @@ if(WIN32)
     target_compile_definitions(focusbird PRIVATE _CRT_SECURE_NO_WARNINGS NOMINMAX WIN32_LEAN_AND_MEAN)
     # Make the Visual Studio "Run" button start FocusBird instead of ALL_BUILD.
     set_property(DIRECTORY PROPERTY VS_STARTUP_PROJECT focusbird)
-elseif(UNIX AND NOT APPLE)
-    target_link_libraries(focusbird PRIVATE m pthread dl rt X11)
 endif()
 
 if(MSVC)
