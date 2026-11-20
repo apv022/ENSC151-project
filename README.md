@@ -29,6 +29,123 @@ Arduino is not connected, which is useful for development and demonstrations.
 - Keyboard fallback for flight (`Space`/`Up`), sound (`Y`), and light (`C`).
 - Grove button starts/restarts a run and flaps during play; it never answers a prompt.
 
+## Quick start
+
+You install a few tools once, then **one command** builds the game, uploads the
+Grove firmware, finds the board's port, and starts playing. No Grove kit? Add
+`--keyboard` (or answer **Y** when it offers keyboard mode) and play with the
+keyboard.
+
+### Windows 10/11
+
+1. Install the tools. Open **PowerShell** and paste this (each line is one
+   install; accept the prompts):
+
+   ```powershell
+   winget install Python.Python.3.12
+   winget install Kitware.CMake
+   winget install ArduinoSA.CLI
+   winget install Microsoft.VisualStudio.2022.BuildTools --override "--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --passive"
+   ```
+
+   Close and reopen PowerShell afterwards so the new commands are found.
+   If you already have Arduino IDE 2, you can skip `ArduinoSA.CLI`; the
+   launcher uses the copy bundled with the IDE.
+2. Plug in the Grove board. If it doesn't appear under **Ports (COM & LPT)** in
+   Device Manager, or it shows as `USB-SERIAL CH340` with a warning icon
+   (common for Grove Beginner Kit / Seeeduino boards), install the CH340
+   driver from WCH's website and replug the board.
+3. **Double-click `run-focusbird.cmd`** in the project folder, or run it from
+   PowerShell:
+
+   ```powershell
+   .\run-focusbird.cmd
+   .\run-focusbird.cmd --keyboard      # no Arduino
+   ```
+
+The first run downloads Raylib and the Arduino AVR core, so it takes a few
+minutes and needs internet. Later runs take seconds.
+
+### macOS
+
+1. Install the tools ([Homebrew](https://brew.sh) required):
+
+   ```sh
+   xcode-select --install
+   brew install cmake python arduino-cli
+   ```
+
+2. Plug in the board, then **double-click `run-focusbird.command`** in Finder
+   or run it from Terminal:
+
+   ```sh
+   ./run-focusbird.py
+   ./run-focusbird.py --keyboard   # no Arduino
+   ```
+
+   If macOS refuses to open the `.command` file, right-click it and choose
+   **Open** once.
+
+### Linux
+
+1. Install the compiler, CMake, and Raylib's X11/audio headers:
+
+   ```sh
+   # Ubuntu / Debian / Mint
+   sudo apt install build-essential cmake git python3 libasound2-dev libx11-dev \
+     libxrandr-dev libxi-dev libxcursor-dev libxinerama-dev libgl1-mesa-dev
+
+   # Fedora
+   sudo dnf install gcc-c++ cmake git python3 alsa-lib-devel libX11-devel \
+     libXrandr-devel libXi-devel libXcursor-devel libXinerama-devel mesa-libGL-devel
+
+   # Arch
+   sudo pacman -S --needed base-devel cmake git python alsa-lib mesa libx11 \
+     libxrandr libxi libxcursor libxinerama arduino-cli
+   ```
+
+2. Install Arduino CLI if your distro doesn't package it (Arch already did
+   above):
+
+   ```sh
+   curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | BINDIR=~/.local/bin sh
+   ```
+
+3. Allow your user to open serial ports, **then log out and back in**:
+
+   ```sh
+   sudo usermod -aG dialout "$USER"   # Ubuntu/Debian/Fedora
+   sudo usermod -aG uucp "$USER"      # Arch
+   ```
+
+4. Run it:
+
+   ```sh
+   ./run-focusbird.py
+   ./run-focusbird.py --keyboard   # no Arduino
+   ```
+
+Don't run the game with `sudo`; fix the group membership instead.
+
+### Launcher options
+
+| Option | What it does |
+| --- | --- |
+| *(none)* | Build, upload firmware to the detected board, play with the Grove kit |
+| `--keyboard` | Build and play with the keyboard only; no Arduino tools needed |
+| `--no-upload` | Skip compiling/uploading the sketch (the board already has it) — faster |
+| `--port PORT` | Use a specific port, e.g. `COM4`, `/dev/ttyACM0`, `/dev/cu.usbmodem1101` |
+| `--fqbn ID` | Board type if it isn't an Uno-compatible board (`arduino-cli board listall`) |
+
+`FOCUSBIRD_PORT`, `FOCUSBIRD_FQBN`, and `FOCUSBIRD_BUILD_DIR` environment
+variables set the same things. The launcher ignores ports that can't be the
+Grove board (such as Windows' built-in `COM1` and Bluetooth serial ports); if
+several USB boards are still plugged in, it asks which one to use.
+
+**Before launching, close Arduino IDE's Serial Monitor and any FocusBird window
+that's still open.** Only one program can use the serial port at a time, and a
+busy port is the most common reason an upload fails.
+
 ## Project layout
 
 ```text
@@ -36,137 +153,33 @@ Arduino is not connected, which is useful for development and demonstrations.
 ├── CMakeLists.txt                # C++17 build and Raylib dependency
 ├── README.md                     # Setup, controls, wiring, protocol, and testing
 ├── run-focusbird.py              # Build, upload Grove firmware, and launch the game
+├── run-focusbird.cmd             # Windows double-click wrapper for the launcher
+├── run-focusbird.command         # macOS double-click wrapper for the launcher
 ├── include/serial_port.h         # Cross-platform non-blocking serial interface
 ├── src/main.cpp                  # Raylib game, prompt state, physics, and UI
 ├── src/serial_port.cpp           # Windows/POSIX serial implementation
 └── arduino/focusbird/focusbird.ino # Grove sensor and buzzer firmware
 ```
 
-## Requirements
+## Building by hand (optional)
 
-- CMake **3.16 or newer**.
-- A C++17 compiler (GCC, Clang, or MSVC).
-- Python 3 for the one-command launcher.
-- Git and an internet connection for the first CMake configure if Raylib is not
-  installed on the system. CMake fetches the pinned Raylib 5.5 source then.
-- Raylib's normal platform dependencies and a desktop environment.
-- Optional hardware: an Arduino compatible with the Arduino IDE/CLI and Grove
-  button, sound sensor, light sensor, and buzzer modules.
-
-## One-command Grove launch
-
-Connect the Grove Arduino by USB, close Arduino Serial Monitor, then run this
-from the project directory:
-
-```sh
-./run-focusbird.py
-```
-
-On Windows PowerShell, use `py .\run-focusbird.py`. The launcher detects the
-serial port, installs the board core if needed, builds the C++ app, compiles and
-uploads the `.ino`, then starts the game connected to that port. If more than
-one serial board is attached, it asks which one to use. To select a port or
-board explicitly:
-
-```sh
-./run-focusbird.py --port /dev/ttyACM0 --fqbn arduino:avr:uno
-```
-
-The launcher needs CMake, a C++ compiler, Python 3, Arduino CLI, and internet
-access the first time it installs a board core or CMake fetches Raylib.
-It uses a checkout-specific build directory under `build/`, so a stale CMake
-cache from a previous project location is not reused.
-
-## Build the desktop game
-
-### Windows
-
-1. Install Visual Studio 2022 or Build Tools with **Desktop development with
-   C++**, plus CMake, Git, and Python 3.
-2. Open a Developer PowerShell in the project directory and run:
-
-```powershell
-cmake -S . -B build -A x64
-cmake --build build --config Release
-.\build\Release\focusbird.exe
-```
-
-Use `--serial COM3` when starting the game with the Grove board connected.
-
-### macOS
-
-1. Install the Xcode command-line tools and CMake:
-
-```sh
-xcode-select --install
-brew install cmake python
-```
-
-2. Build and run from the project directory:
+The launcher just runs these commands; use them directly if you prefer an IDE
+or want to debug.
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build --parallel
-./build/focusbird
+cmake --build build --config Release --parallel
 ```
 
-Use a `/dev/cu.usbmodem...` port with `--serial` when connecting the Grove board.
+The executable is `build/focusbird` (macOS/Linux), `build\Release\focusbird.exe`
+(Windows, Visual Studio), or `build\focusbird.exe` (Windows, MinGW). Start it with
+`--serial PORT` to use the Grove kit, or with no arguments for keyboard mode.
+On Windows you can also open the folder in Visual Studio 2022 (**File > Open >
+Folder**), which understands `CMakeLists.txt` directly.
 
-### Linux
-
-On Arch Linux, install the build and X11/audio dependencies:
-
-```sh
-sudo pacman -Syu
-sudo pacman -S --needed base-devel cmake git pkgconf python alsa-lib mesa \
-  libx11 libxrandr libxi libxcursor libxinerama libxext libxfixes \
-  libxrender libxxf86vm
-```
-
-On Ubuntu or Debian, install the compiler and Raylib's common X11/audio
-development dependencies:
-
-```sh
-sudo apt update
-sudo apt install build-essential cmake git python3 pkg-config libasound2-dev \
-  libx11-dev libxrandr-dev libxi-dev libxcursor-dev libxinerama-dev \
-  libgl1-mesa-dev
-```
-
-On Fedora, install the equivalent packages with `dnf` (`gcc-c++`, `cmake`,
-`git`, `python3`, `alsa-lib-devel`, `libX11-devel`, `libXrandr-devel`, `libXi-devel`,
-`libXcursor-devel`, `libXinerama-devel`, and `mesa-libGL-devel`).
-
-After installing the packages for your distribution, build and run:
-
-```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build --parallel
-./build/focusbird
-```
-
-Use `--serial /dev/ttyACM0` or `--serial /dev/ttyUSB0` for the Grove board.
-For serial permissions, Debian/Ubuntu and Fedora commonly use the `dialout`
-group; Arch commonly uses `uucp`:
-
-```sh
-# Arch
-sudo usermod -aG uucp "$USER"
-
-# Debian/Ubuntu/Fedora (if the port is group-owned by dialout)
-sudo usermod -aG dialout "$USER"
-```
-
-Log out and back in after changing groups. Do not run the game as root.
-
-### Raylib dependency behavior
-
-`CMakeLists.txt` first looks for an installed Raylib package (version 5 or
-newer). Otherwise it downloads the pinned Raylib 5.5 source during the first
-configure, so that configure needs internet access. To build offline, install
-Raylib 5.x using the platform package manager and make its CMake package
-discoverable before configuring.
-
+CMake uses an installed Raylib 5.x if it finds one; otherwise it downloads
+Raylib 5.5 on the first configure (using Git if installed, otherwise a source
+archive). To build offline, install Raylib 5.x with your package manager first.
 
 ## Keyboard controls
 
@@ -213,55 +226,18 @@ The standard Grove button module has an onboard pull-down resistor and reads
 HIGH when pressed, so the sketch configures D2 as a normal input (not
 `INPUT_PULLUP`).
 
-### Install the board core and upload firmware
+### Uploading the firmware by hand (optional)
 
-Install Arduino IDE 2 or Arduino CLI for your operating system. The
-[Arduino CLI installation guide](https://arduino.github.io/arduino-cli/latest/installation/)
-covers Windows, macOS, and Linux. On Arch Linux, install the CLI with
-`sudo pacman -S arduino-cli`; on macOS, Homebrew provides it:
-
-```sh
-brew install arduino-cli
-```
-
-The one-command launcher installs the detected board core if it is missing. For
-manual Arduino CLI use, install the AVR core once and list attached boards:
+The launcher uploads the sketch automatically. To do it yourself, open
+`arduino/focusbird/focusbird.ino` in Arduino IDE 2, pick the board and port,
+and click **Upload**, or use Arduino CLI:
 
 ```sh
 arduino-cli core install arduino:avr
-arduino-cli board list
-```
-
-Compile the sketch for an Uno-compatible board:
-
-```sh
+arduino-cli board list                   # shows the port, e.g. COM4 or /dev/ttyACM0
 arduino-cli compile --fqbn arduino:avr:uno arduino/focusbird
+arduino-cli upload -p PORT --fqbn arduino:avr:uno arduino/focusbird
 ```
-
-Upload using the port name for your OS:
-
-Linux:
-
-```sh
-arduino-cli upload -p /dev/ttyACM0 --fqbn arduino:avr:uno arduino/focusbird
-```
-
-macOS (use the `/dev/cu.*` device):
-
-```sh
-arduino-cli upload -p /dev/cu.usbmodem1101 --fqbn arduino:avr:uno arduino/focusbird
-```
-
-Windows PowerShell:
-
-```powershell
-arduino-cli upload -p COM3 --fqbn arduino:avr:uno arduino/focusbird
-```
-
-Replace the FQBN and example port with the values reported by `arduino-cli board
-list`. The same compile/upload workflow is available in Arduino IDE: open
-`arduino/focusbird/focusbird.ino`, choose the matching board and port, then
-select **Upload**.
 
 ### Verify and tune the sensors
 
@@ -300,33 +276,20 @@ event per cover and rearms after the reading rises above the release threshold.
 
 ## Connect the game to the Arduino
 
-Find the device name with `arduino-cli board list`, then pass it as `--serial`:
+The launcher passes the detected port automatically. To start the built game
+yourself, pass the port shown by `arduino-cli board list`:
 
 ```sh
-# Linux
-./build/focusbird --serial /dev/ttyACM0
-
-# macOS
-./build/focusbird --serial /dev/cu.usbmodem1101
+./build/focusbird --serial /dev/ttyACM0          # Linux
+./build/focusbird --serial /dev/cu.usbmodem1101  # macOS
+.\build\Release\focusbird.exe --serial COM4      # Windows
 ```
 
-Windows PowerShell:
-
-```powershell
-.\build\Release\focusbird.exe --serial COM3
-```
-
-Other common names include `/dev/ttyUSB0`, `/dev/cu.usbmodem...`, and `COM3`.
-On Linux, access may require membership in the serial-device group (often
-`dialout`). On Ubuntu/Debian, add yourself with
-`sudo usermod -aG dialout "$USER"`, then log out and back in. Do not run the
-game as root to work around permissions. Close Arduino Serial Monitor first.
-
-If the requested port cannot be opened, FocusBird prints a warning and keeps
-keyboard controls available while retrying every two seconds. The title screen
-and HUD show **SEARCHING FOR GROVE KIT** until the port opens, then
-**GROVE KIT CONNECTED**. If the device disconnects, the game continues and
-reconnects automatically when the same port is available again.
+If the port can't be opened, FocusBird prints a warning, keeps keyboard
+controls working, and retries every two seconds. The title screen and HUD show
+**SEARCHING FOR GROVE KIT** until the port opens, then **GROVE KIT CONNECTED**.
+If the board is unplugged mid-game, play continues and it reconnects when the
+same port comes back.
 
 ## Serial protocol
 
@@ -414,9 +377,14 @@ frame time, with a safety clamp after long frame stalls.
 
 | Symptom | Checks |
 | --- | --- |
-| CMake cannot find Raylib | Ensure the first configure can access GitHub, or install Raylib 5.x and expose its CMake package. |
-| Linux build reports missing X11/audio dependencies | Install the Raylib development dependencies for your Linux distribution, then rerun CMake configure. |
-| Serial port cannot open | Confirm the selected path, close Serial Monitor, check device permissions, and ensure the board finished uploading; FocusBird keeps retrying the selected port. |
+| `cmake` / `py` / `arduino-cli` not recognized (Windows) | Close and reopen PowerShell after `winget install` so PATH updates. |
+| Windows: "No CMAKE_CXX_COMPILER could be found" | Install the Visual Studio Build Tools line from the quick start, then delete the `build` folder and rerun. |
+| Windows: board not found / no COM port | Try another USB cable (many are charge-only). If Device Manager shows `USB-SERIAL CH340` with a warning icon, install the CH340 driver. |
+| Upload fails with "Access is denied" / "port busy" | Close Arduino Serial Monitor/IDE and any FocusBird window, then rerun. |
+| Game shows SEARCHING FOR GROVE KIT forever | Same as above: another program holds the port, or the wrong `--port` was chosen. Check `arduino-cli board list`. |
+| CMake cannot download Raylib | The first build needs internet access to GitHub, or install Raylib 5.x with your package manager. |
+| Linux: "RandR headers not found" or similar | Install the Linux packages from the quick start, delete `build`, and rerun. |
+| Linux: permission denied on `/dev/ttyACM0` | Add yourself to `dialout` (or `uucp` on Arch) and log out/in. |
 | Sound fires in room noise | Inspect `soundRaw`; it must be above 800 for three samples. Check the sound sensor and A0 connection. |
 | Sound prompt does not trigger | Inspect `soundRaw` while yelling. If it does not exceed 800, lower `SOUND_RAW_THRESHOLD` and verify the sensor is on A0. |
 | Light prompt does not trigger | Confirm the analog Grove Light Sensor is plugged into A1 and `lightRaw` reaches `lightThreshold` or lower when covered. Check `ANALOG_MAX_VALUE` for the board's ADC range. |

@@ -86,7 +86,23 @@ bool SerialPort::Open(const std::string& portName, unsigned int baudRate) {
     settings.ByteSize = 8; // Use eight data bits for each transmitted byte.
     settings.Parity = NOPARITY; // Disable parity for the agreed 8-N-1 protocol.
     settings.StopBits = ONESTOPBIT; // Use one stop bit after each byte.
-    settings.fDtrControl = DTR_CONTROL_ENABLE; // Reset many Arduino boards on open.
+    settings.fBinary = TRUE; // Windows only supports binary mode; required by the driver.
+    settings.fParity = FALSE; // Do not check parity on received bytes.
+    // GetCommState returns whatever a previous program (Arduino IDE, a terminal,
+    // a CH340/FTDI driver default) left behind. Explicitly turn off every kind of
+    // flow control, otherwise reads or writes can stall forever on Grove boards.
+    settings.fOutxCtsFlow = FALSE;
+    settings.fOutxDsrFlow = FALSE;
+    settings.fDsrSensitivity = FALSE;
+    settings.fOutX = FALSE;
+    settings.fInX = FALSE;
+    settings.fNull = FALSE;
+    settings.fErrorChar = FALSE;
+    // With fAbortOnError set, the first framing/overrun error makes every later
+    // ReadFile fail until ClearCommError is called, which looked like a disconnect.
+    settings.fAbortOnError = FALSE;
+    settings.fDtrControl = DTR_CONTROL_ENABLE; // Assert DTR: resets Uno-style boards, required by native-USB boards.
+    settings.fRtsControl = RTS_CONTROL_ENABLE; // Keep RTS asserted; some USB-serial chips need it to pass data.
     if (!SetCommState(device, &settings)) {
         CloseHandle(device); // Do not retain a half-configured connection.
         return false;
@@ -100,6 +116,7 @@ bool SerialPort::Open(const std::string& portName, unsigned int baudRate) {
         CloseHandle(device); // Release the device if non-blocking mode cannot be set.
         return false;
     }
+    PurgeComm(device, PURGE_RXCLEAR | PURGE_TXCLEAR); // Drop bytes buffered before the game opened the port.
     handle_ = reinterpret_cast<std::intptr_t>(device); // Retain the Win32 handle without truncation.
 #else
     const int descriptor = open(portName.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK);
@@ -177,7 +194,12 @@ std::vector<std::string> SerialPort::ReadLines() {
     DWORD bytesRead = 0; // Win32 fills this with the number of bytes received.
     const HANDLE device = reinterpret_cast<HANDLE>(handle_);
     if (!ReadFile(device, bytes.data(), static_cast<DWORD>(bytes.size()), &bytesRead, nullptr)) {
-        Close(); // Treat a device-level read error as a disconnect so the app can reconnect.
+        DWORD errors = 0;
+        // A line error (e.g. noise while the board resets) is recoverable; only a
+        // failure to even query the port means the device was actually unplugged.
+        if (!ClearCommError(device, &errors, nullptr)) {
+            Close(); // Treat a device-level read error as a disconnect so the app can reconnect.
+        }
         return lines;
     }
     if (bytesRead > 0) {

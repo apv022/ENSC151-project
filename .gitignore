@@ -11,3 +11,4 @@ cmake-build-*/
 *.elf
 *.map
 tests/
+__pycache__/
