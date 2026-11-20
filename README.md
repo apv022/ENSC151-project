@@ -88,6 +88,15 @@ Use a `/dev/cu.usbmodem...` port with `--serial` when connecting the Grove board
 
 ### Linux
 
+On Arch Linux, install the build and X11/audio dependencies:
+
+```sh
+sudo pacman -Syu
+sudo pacman -S --needed base-devel cmake git pkgconf alsa-lib mesa \
+  libx11 libxrandr libxi libxcursor libxinerama libxext libxfixes \
+  libxrender libxxf86vm
+```
+
 On Ubuntu or Debian, install the compiler and Raylib's common X11/audio
 development dependencies:
 
@@ -98,7 +107,11 @@ sudo apt install build-essential cmake git pkg-config libasound2-dev \
   libgl1-mesa-dev
 ```
 
-Then build and run:
+On Fedora, install the equivalent packages with `dnf` (`gcc-c++`, `cmake`,
+`git`, `alsa-lib-devel`, `libX11-devel`, `libXrandr-devel`, `libXi-devel`,
+`libXcursor-devel`, `libXinerama-devel`, and `mesa-libGL-devel`).
+
+After installing the packages for your distribution, build and run:
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -106,12 +119,19 @@ cmake --build build --parallel
 ./build/focusbird
 ```
 
-On Fedora, install the equivalent packages with `dnf` (`gcc-c++`, `cmake`,
-`git`, `alsa-lib-devel`, `libX11-devel`, `libXrandr-devel`, `libXi-devel`,
-`libXcursor-devel`, `libXinerama-devel`, and `mesa-libGL-devel`).
 Use `--serial /dev/ttyACM0` or `--serial /dev/ttyUSB0` for the Grove board.
-If access is denied, add your login to the device group (commonly `dialout`),
-then log out and back in; do not run the game as root.
+For serial permissions, Debian/Ubuntu and Fedora commonly use the `dialout`
+group; Arch commonly uses `uucp`:
+
+```sh
+# Arch
+sudo usermod -aG uucp "$USER"
+
+# Debian/Ubuntu/Fedora (if the port is group-owned by dialout)
+sudo usermod -aG dialout "$USER"
+```
+
+Log out and back in after changing groups. Do not run the game as root.
 
 ### Raylib dependency behavior
 
@@ -171,7 +191,8 @@ HIGH when pressed, so the sketch configures D2 as a normal input (not
 
 Install Arduino IDE 2 or Arduino CLI for your operating system. The
 [Arduino CLI installation guide](https://arduino.github.io/arduino-cli/latest/installation/)
-covers Windows, macOS, and Linux; on macOS, Homebrew also provides it:
+covers Windows, macOS, and Linux. On Arch Linux, install the CLI with
+`sudo pacman -S arduino-cli`; on macOS, Homebrew provides it:
 
 ```sh
 brew install arduino-cli
