@@ -223,7 +223,7 @@ void HandleAction(Game& game, Action action, SerialPort* serial) { // [CHG-01] R
         || (active->prompt == PromptType::Yell && action == Action::Sound)
         || (active->prompt == PromptType::Cover && action == Action::Light);
         
-    }
+    
     if (matches) { // [REVIEW] Always true after the return above; the else branch below is unreachable.
         active->result = PromptResult::Correct; // Mark the gate answered to ignore repeat sensor events.
         game.correctResponses += 1; // Record this response for the final results screen.
