@@ -2,6 +2,7 @@
 """Build the desktop app and Grove firmware, upload it, then launch FocusBird."""
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -171,7 +172,9 @@ def main():
         run(["arduino-cli", "core", "update-index"])
         run(["arduino-cli", "core", "install", core])
 
-    build_dir = Path(os.environ.get("FOCUSBIRD_BUILD_DIR", ROOT / "build")).expanduser()
+    root_tag = hashlib.sha256(str(ROOT).encode("utf-8")).hexdigest()[:10]
+    default_build_dir = ROOT / "build" / f"run-focusbird-{root_tag}"
+    build_dir = Path(os.environ.get("FOCUSBIRD_BUILD_DIR", default_build_dir)).expanduser()
     if not build_dir.is_absolute():
         build_dir = ROOT / build_dir
 

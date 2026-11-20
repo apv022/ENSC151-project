@@ -74,6 +74,8 @@ board explicitly:
 
 The launcher needs CMake, a C++ compiler, Python 3, Arduino CLI, and internet
 access the first time it installs a board core or CMake fetches Raylib.
+It uses a checkout-specific build directory under `build/`, so a stale CMake
+cache from a previous project location is not reused.
 
 ## Build the desktop game
 
