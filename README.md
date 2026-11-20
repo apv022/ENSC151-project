@@ -47,40 +47,80 @@ Arduino is not connected, which is useful for development and demonstrations.
 - A C++17 compiler (GCC, Clang, or MSVC).
 - Git and an internet connection for the first CMake configure if Raylib is not
   installed on the system. CMake fetches the pinned Raylib 5.5 source then.
-- Raylib's normal platform dependencies. On Linux, a desktop/X11 development
-  environment is required; Raylib's build output will identify any missing
-  packages.
+- Raylib's normal platform dependencies and a desktop environment.
 - Optional hardware: an Arduino compatible with the Arduino IDE/CLI and Grove
   button, sound sensor, light sensor, and buzzer modules.
 
 ## Build the desktop game
 
-From the project root:
+### Windows
+
+1. Install Visual Studio 2022 or Build Tools with **Desktop development with
+   C++**, plus CMake and Git.
+2. Open a Developer PowerShell in the project directory and run:
+
+```powershell
+cmake -S . -B build -A x64
+cmake --build build --config Release
+.\build\Release\focusbird.exe
+```
+
+Use `--serial COM3` when starting the game with the Grove board connected.
+
+### macOS
+
+1. Install the Xcode command-line tools and CMake:
+
+```sh
+xcode-select --install
+brew install cmake
+```
+
+2. Build and run from the project directory:
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build --config Release
-```
-
-The executable is usually `build/focusbird` on Linux/macOS and
-`build/Release/focusbird.exe` with a multi-configuration Windows generator.
-
-Run without hardware:
-
-```sh
+cmake --build build --parallel
 ./build/focusbird
 ```
 
-On Windows, run the executable from the build output directory or use its full
-path. For a debug build, replace `Release` with `Debug` or omit the build type.
+Use a `/dev/cu.usbmodem...` port with `--serial` when connecting the Grove board.
+
+### Linux
+
+On Ubuntu or Debian, install the compiler and Raylib's common X11/audio
+development dependencies:
+
+```sh
+sudo apt update
+sudo apt install build-essential cmake git pkg-config libasound2-dev \
+  libx11-dev libxrandr-dev libxi-dev libxcursor-dev libxinerama-dev \
+  libgl1-mesa-dev
+```
+
+Then build and run:
+
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --parallel
+./build/focusbird
+```
+
+On Fedora, install the equivalent packages with `dnf` (`gcc-c++`, `cmake`,
+`git`, `alsa-lib-devel`, `libX11-devel`, `libXrandr-devel`, `libXi-devel`,
+`libXcursor-devel`, `libXinerama-devel`, and `mesa-libGL-devel`).
+Use `--serial /dev/ttyACM0` or `--serial /dev/ttyUSB0` for the Grove board.
+If access is denied, add your login to the device group (commonly `dialout`),
+then log out and back in; do not run the game as root.
 
 ### Raylib dependency behavior
 
-`CMakeLists.txt` first looks for a system Raylib package (version 5 or newer).
-When none is found, it downloads the pinned Raylib 5.5 source via CMake
-`FetchContent`. The initial configure therefore needs network access. To build
-fully offline, install Raylib 5.x using the platform package manager and make
-its CMake package discoverable before configuring.
+`CMakeLists.txt` first looks for an installed Raylib package (version 5 or
+newer). Otherwise it downloads the pinned Raylib 5.5 source during the first
+configure, so that configure needs internet access. To build offline, install
+Raylib 5.x using the platform package manager and make its CMake package
+discoverable before configuring.
+
 
 ## Keyboard controls
 
@@ -113,7 +153,7 @@ Connect the Grove components to the pins configured at the top of
 | Grove button | D2 | Flap and button-prompt response; module pull-down, pressed is HIGH |
 | Grove buzzer | D3 | Prompt cue and correct/incorrect response feedback |
 | Grove sound sensor | A0 | A sound above the learned room baseline emits `SOUND` |
-| Grove light sensor | A1 | Covering the sensor below its threshold emits `LIGHT` |
+| Grove light sensor | A1 | Covering lowers the raw reading from its ambient baseline and emits `LIGHT` |
 
 Pin numbers vary by Grove base shield, board, and wiring. Confirm the labels on
 your board before connecting anything, and change the constants in the sketch
@@ -127,57 +167,119 @@ The standard Grove button module has an onboard pull-down resistor and reads
 HIGH when pressed, so the sketch configures D2 as a normal input (not
 `INPUT_PULLUP`).
 
-### Upload firmware
+### Install the board core and upload firmware
 
-1. Open `arduino/focusbird/focusbird.ino` in the Arduino IDE, or select the
-   `arduino/focusbird` sketch directory in Arduino CLI.
-2. Select the matching board and USB port.
-3. Compile and upload the sketch.
-4. Close Arduino Serial Monitor before starting the game; only one application
-   can normally own the serial port at a time.
+Install Arduino IDE 2 or Arduino CLI for your operating system. The
+[Arduino CLI installation guide](https://arduino.github.io/arduino-cli/latest/installation/)
+covers Windows, macOS, and Linux; on macOS, Homebrew also provides it:
 
-With Arduino CLI installed, a typical Uno-compatible upload is:
+```sh
+brew install arduino-cli
+```
+
+With Arduino CLI, install the AVR board core once, then list attached boards:
+
+```sh
+arduino-cli core install arduino:avr
+arduino-cli board list
+```
+
+Compile the sketch for an Uno-compatible board:
 
 ```sh
 arduino-cli compile --fqbn arduino:avr:uno arduino/focusbird
+```
+
+Upload using the port name for your OS:
+
+Linux:
+
+```sh
 arduino-cli upload -p /dev/ttyACM0 --fqbn arduino:avr:uno arduino/focusbird
 ```
 
-Replace the FQBN and port with values for your board. On Windows, a port may be
-named `COM3`; on macOS it is commonly `/dev/cu.usbmodem...`.
+macOS (use the `/dev/cu.*` device):
 
-### Tune the sensors
+```sh
+arduino-cli upload -p /dev/cu.usbmodem1101 --fqbn arduino:avr:uno arduino/focusbird
+```
 
-The sketch exposes these starting values near its top:
+Windows PowerShell:
 
-- `SOUND_DELTA_THRESHOLD`: analog rise above the automatically learned quiet
-  baseline required to emit `SOUND`. Raise it if room noise triggers events;
-  lower it if a deliberate yell is not detected.
-- `SOUND_COOLDOWN_MS`: suppresses multiple detections from one yell/noise.
-- `LIGHT_COVERED_THRESHOLD`: analog value at or below which the sensor counts as
-  covered. Check actual uncovered/covered readings in your lighting before
-  changing it.
-- `LIGHT_RELEASE_HYSTERESIS`: requires the sensor to become brighter than the
-  cover threshold by this amount before another cover event can be generated.
+```powershell
+arduino-cli upload -p COM3 --fqbn arduino:avr:uno arduino/focusbird
+```
+
+Replace the FQBN and example port with the values reported by `arduino-cli board
+list`. The same compile/upload workflow is available in Arduino IDE: open
+`arduino/focusbird/focusbird.ino`, choose the matching board and port, then
+select **Upload**.
+
+### Verify and tune the sensors
+
+The firmware prints a diagnostic line every half second at **115200 baud**:
+
+```text
+SENSORS <soundRaw> <soundBaseline> <soundDelta> <lightRaw> <lightBaseline>
+```
+
+To inspect it, close FocusBird, open Arduino Serial Monitor (or run
+`arduino-cli monitor -p PORT --config 115200`), then reset the board. Use
+`COM3` on Windows, `/dev/cu.usbmodem...` on macOS, or `/dev/ttyACM0` on Linux.
+Keep the room quiet for the first second while the sound baseline calibrates.
+The `soundDelta` value is the current sound reading minus that learned baseline.
+When finished, close the monitor before launching FocusBird; only one app can
+normally own the serial port at a time.
+
+Defaults and tuning guidance:
+
+- `SOUND_DELTA_THRESHOLD` (default `180`): a sound must exceed the learned
+  baseline by this many ADC counts for three consecutive samples. Increase it
+  in steps (for example, to `220`) if the room still triggers; lower it if a
+  deliberate yell does not trigger. A confirmed burst emits once, then must
+  return near baseline before it can emit again.
+- `SOUND_CALIBRATION_MS` (default `1000`): keep the room quiet during this
+  startup interval so steady ambient noise becomes the baseline.
+- `LIGHT_COVER_DELTA` (default `100`): the raw light reading must fall at least
+  this far below its learned uncovered level for three samples. Standard Grove
+  analog light sensors read higher when brighter. If the diagnostic `lightRaw`
+  value clearly drops when covered but by less than 100 counts, lower this value
+  (for example, to `60`).
+- `LIGHT_RELEASE_DELTA` (default `45`): requires the reading to return close to
+  the ambient level before another cover event is armed.
 - `BUTTON_DEBOUNCE_MS`: rejects rapid electrical transitions from the button.
 
-Sensor modules and rooms differ. Test readings in the actual demonstration
-environment and adjust these values instead of assuming the defaults fit every
-board. The sketch deliberately emits a light event on the transition into the
-covered state, not continuously while it remains covered.
+The `SENSORS` line also shows whether the light input changes at all. Check that
+the analog Grove Light Sensor is plugged into **A1**, not an I2C/digital light
+module, and that its Grove cable is seated. Covering should make `lightRaw`
+drop; uncovering should bring it back toward `lightBaseline`. If the values do
+not change, check the sensor, cable, and A1 port before tuning thresholds. The
+firmware emits one `LIGHT` event when the cover is detected, not continuously
+while the sensor remains covered.
 
 ## Connect the game to the Arduino
 
-Find the device name, then pass it as `--serial`:
+Find the device name with `arduino-cli board list`, then pass it as `--serial`:
 
 ```sh
+# Linux
 ./build/focusbird --serial /dev/ttyACM0
+
+# macOS
+./build/focusbird --serial /dev/cu.usbmodem1101
+```
+
+Windows PowerShell:
+
+```powershell
+.\build\Release\focusbird.exe --serial COM3
 ```
 
 Other common names include `/dev/ttyUSB0`, `/dev/cu.usbmodem...`, and `COM3`.
-On Linux, access may require membership in the system's serial-device group
-(often `dialout`) and a new login session. Do not run the game as root just to
-work around normal device permissions. Close Arduino Serial Monitor first.
+On Linux, access may require membership in the serial-device group (often
+`dialout`). On Ubuntu/Debian, add yourself with
+`sudo usermod -aG dialout "$USER"`, then log out and back in. Do not run the
+game as root to work around permissions. Close Arduino Serial Monitor first.
 
 If the requested port cannot be opened, FocusBird prints a warning and keeps
 keyboard controls available while retrying every two seconds. The title screen
@@ -193,14 +295,15 @@ Each message is a newline-terminated ASCII line:
 | Direction | Message | Meaning |
 | --- | --- | --- |
 | Arduino → game | `BTN` | Debounced button press; also flaps the bird |
-| Arduino → game | `SOUND` | Sound crossed the configured threshold |
+| Arduino → game | `SOUND` | Confirmed sound burst crossed the configured threshold |
 | Arduino → game | `LIGHT` | Light sensor transitioned to covered |
+| Arduino → game | `SENSORS ...` | Raw sensor/baseline diagnostics, printed twice per second |
 | Game → Arduino | `BUZZER 900 70` | Play a 900 Hz prompt cue for 70 ms |
 | Game → Arduino | `BUZZER 1350 100` | Short positive feedback tone |
 | Game → Arduino | `BUZZER 380 150` | Lower-pitched incorrect-action feedback |
 
 The game timestamps a response when its complete line is received. Unknown
-lines, including the firmware's optional `READY` diagnostic, are ignored.
+lines, including `READY` and `SENSORS ...`, are ignored.
 Incoming reads are non-blocking and tolerate partial USB packets until a newline
 arrives.
 
@@ -254,14 +357,17 @@ frame time, with a safety clamp after long frame stalls.
    **SEARCHING FOR GROVE KIT** while the port is unavailable).
 3. Press the Grove button on the title screen to start. During play it flaps the
    bird and, during a button prompt, also records a correct answer.
-4. Make a deliberate sound during a YELL prompt and cover the light sensor during
+4. Use Serial Monitor to confirm that covering A1 lowers `lightRaw` by at least
+   `LIGHT_COVER_DELTA`; check that a deliberate yell raises `soundDelta` above
+   `SOUND_DELTA_THRESHOLD`. Close the monitor, then test both prompts in-game.
+5. Make a deliberate sound during a YELL prompt and cover the light sensor during
    a COVER prompt; verify each is accepted only during its matching window.
-5. Cover the light sensor before a COVER prompt, then uncover it. Confirm the
+6. Cover the light sensor before a COVER prompt, then uncover it. Confirm the
    early event does not answer the later prompt and a new cover transition does.
-6. Hold the button and keep the light sensor covered; verify neither produces a
+7. Hold the button and keep the light sensor covered; verify neither produces a
    stream of repeated input events.
-7. Unplug the Arduino during a run; verify the game continues in keyboard mode.
-8. Check buzzer cues and tune thresholds in the actual room.
+8. Unplug the Arduino during a run; verify the game continues in keyboard mode.
+9. Check buzzer cues and tune thresholds in the actual room.
 
 ## Troubleshooting
 
@@ -270,9 +376,10 @@ frame time, with a safety clamp after long frame stalls.
 | CMake cannot find Raylib | Ensure the first configure can access GitHub, or install Raylib 5.x and expose its CMake package. |
 | Linux build reports missing X11/audio dependencies | Install the Raylib development dependencies for your Linux distribution, then rerun CMake configure. |
 | Serial port cannot open | Confirm the selected path, close Serial Monitor, check device permissions, and ensure the board finished uploading; FocusBird keeps retrying the selected port. |
-| Inputs are too sensitive | Increase `SOUND_DELTA_THRESHOLD`; adjust the light threshold using observed raw values. |
-| Sound prompt does not trigger | Lower `SOUND_DELTA_THRESHOLD`, check the sensor analog output, and test closer to the microphone. |
-| Light prompt triggers while uncovered | Compare uncovered/covered readings and lower `LIGHT_COVERED_THRESHOLD` as appropriate. |
+| Sound fires in room noise | Let the room stay quiet during the first second after reset, then inspect `soundDelta`; raise `SOUND_DELTA_THRESHOLD` in 20–40 count steps. Each burst now needs three high samples and cannot repeat until it quiets. |
+| Sound prompt does not trigger | Inspect `soundDelta` while yelling; lower `SOUND_DELTA_THRESHOLD` gradually and check that the analog sound sensor is plugged into A0. |
+| Light prompt does not trigger | Confirm the analog Grove Light Sensor is plugged into A1. Compare `lightRaw` with `lightBaseline` uncovered and covered; lower `LIGHT_COVER_DELTA` if the drop is smaller than its setting. |
+| Light triggers without covering | Increase `LIGHT_COVER_DELTA`; the sensor must stay below its ambient baseline for three samples. |
 | One physical action triggers more than once | Increase the sound cooldown or button debounce; verify the light hysteresis and release behavior. |
 | Buzzer does not sound | Check the configured buzzer pin, module polarity/type, and whether that board supports `tone()` on the selected pin. |
 | Window opens but keyboard input seems ignored | Start a run with Enter; Y and C only answer a prompt while its gate is in range. |

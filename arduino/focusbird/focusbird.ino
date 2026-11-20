@@ -20,13 +20,22 @@ const uint8_t BUZZER_PIN = 3; // Grove buzzer digital output; uses tone() for fe
 const uint8_t SOUND_SENSOR_PIN = A0; // Analog output from the Grove sound sensor.
 const uint8_t LIGHT_SENSOR_PIN = A1; // Analog output from the Grove light sensor.
 
-const int SOUND_DELTA_THRESHOLD = 95; // Sound must rise this far above the learned room baseline.
-const int LIGHT_COVERED_THRESHOLD = 320; // Reading at/below this value means the sensor is covered.
-const int LIGHT_RELEASE_HYSTERESIS = 70; // Extra light before another cover event can be armed.
+const int SOUND_DELTA_THRESHOLD = 180; // Yell must clearly exceed the calibrated room-noise level.
+const int SOUND_REARM_DELTA = 85; // Sound must settle near baseline before another yell can count.
+const int LIGHT_COVER_DELTA = 100; // Covering must lower the light reading this far from ambient.
+const int LIGHT_RELEASE_DELTA = 45; // Light must return near ambient before another cover can count.
 const unsigned long BUTTON_DEBOUNCE_MS = 35; // Ignore button contact bounce shorter than this interval.
-const unsigned long SOUND_COOLDOWN_MS = 500; // Limit repeated sound events from one yell/noise.
+const unsigned long SOUND_COOLDOWN_MS = 1000; // Separate distinct yells and suppress ambient-noise repeats.
+const unsigned long SOUND_CALIBRATION_MS = 1000; // Learn the room level before accepting sound events.
 const unsigned long SENSOR_SAMPLE_INTERVAL_MS = 5; // Sample analog sensors without busy waiting.
-const float SOUND_BASELINE_ALPHA = 0.015f; // Slow baseline adaptation for changing room noise.
+const unsigned long SENSOR_REPORT_INTERVAL_MS = 500; // Keep raw readings available for quick hardware checks.
+const unsigned int SOUND_CONFIRM_SAMPLES = 3; // Require a short sustained increase, not one noisy ADC spike.
+const unsigned int SOUND_REARM_SAMPLES = 20; // Require 100 ms of near-baseline sound before rearming.
+const unsigned int LIGHT_CONFIRM_SAMPLES = 3; // Reject one-sample light fluctuations.
+const unsigned int LIGHT_RELEASE_SAMPLES = 5; // Require a stable uncover before rearming the sensor.
+const float SOUND_CALIBRATION_ALPHA = 0.10f; // Quickly learn ambient sound during the startup window.
+const float SOUND_BASELINE_ALPHA = 0.025f; // Slowly track the room level without chasing a yell.
+const float LIGHT_BASELINE_ALPHA = 0.005f; // Track slow room-light changes without following a hand cover.
 
 // ------------------------------- Runtime state -------------------------------
 
@@ -34,8 +43,16 @@ bool stableButtonPressed = false; // Debounced state used to report one event pe
 bool lastRawButtonPressed = false; // Most recent electrical state used to detect transitions.
 unsigned long buttonChangeStartedAt = 0; // Time when the un-debounced button value last changed.
 unsigned long lastSensorSampleAt = 0; // Time of the last non-blocking analog sensor sample.
+unsigned long lastSensorReportAt = 0; // Time of the last raw sensor diagnostic line.
 unsigned long lastSoundEventAt = 0; // Time of the last accepted sound trigger.
+unsigned long soundCalibrationStartedAt = 0; // Start of the quiet-room baseline learning window.
 float soundBaseline = 0.0f; // Slowly changing analog room-noise estimate.
+float lightBaseline = 0.0f; // Ambient light level captured while the sensor is uncovered.
+unsigned int soundAboveThresholdSamples = 0; // Consecutive high readings required to accept a yell.
+unsigned int soundQuietSamples = 0; // Consecutive quiet readings required to rearm sound detection.
+unsigned int lightCoveredSamples = 0; // Consecutive covered readings required to accept a cover.
+unsigned int lightReleasedSamples = 0; // Consecutive bright readings required to rearm light detection.
+bool soundArmed = true; // One sound event per burst until the reading returns near its baseline.
 bool lightCovered = false; // Hysteresis state prevents repeated events while the sensor stays covered.
 char commandBuffer[64] = {}; // Fixed-size command buffer avoids dynamic serial parsing allocations.
 size_t commandLength = 0; // Number of command characters currently collected.
@@ -47,6 +64,32 @@ size_t commandLength = 0; // Number of command characters currently collected.
  */
 void SendEvent(const char* eventName) {
   Serial.println(eventName); // A line boundary lets the C++ game parse partial USB packets safely.
+}
+
+/**
+ * @brief Emit raw sensor values for calibration through Arduino Serial Monitor.
+ * @param nowMs Current Arduino millis() value used to rate-limit diagnostics.
+ * @param soundReading Current raw sound ADC value.
+ * @param soundDelta Difference between sound reading and learned room baseline.
+ * @param lightReading Current raw light ADC value.
+ * @return No value; the desktop game ignores these diagnostic lines.
+ */
+void ReportSensorReadings(unsigned long nowMs, int soundReading, int soundDelta, int lightReading) {
+  if ((nowMs - lastSensorReportAt) < SENSOR_REPORT_INTERVAL_MS) {
+    return;
+  }
+  lastSensorReportAt = nowMs;
+
+  Serial.print("SENSORS ");
+  Serial.print(soundReading);
+  Serial.print(' ');
+  Serial.print(static_cast<int>(soundBaseline + 0.5f));
+  Serial.print(' ');
+  Serial.print(soundDelta);
+  Serial.print(' ');
+  Serial.print(lightReading);
+  Serial.print(' ');
+  Serial.println(static_cast<int>(lightBaseline + 0.5f));
 }
 
 /**
@@ -82,23 +125,77 @@ void UpdateAnalogSensors(unsigned long nowMs) {
   lastSensorSampleAt = nowMs; // Schedule the next sample relative to this one.
 
   const int soundReading = analogRead(SOUND_SENSOR_PIN); // Read sound sensor's current analog level.
-  const float soundDifference = soundReading - soundBaseline; // Compare signal against room noise.
-  if (soundDifference > SOUND_DELTA_THRESHOLD
-      && (nowMs - lastSoundEventAt) >= SOUND_COOLDOWN_MS) {
-    lastSoundEventAt = nowMs; // Start cooldown before sending to suppress repeated peaks.
-    SendEvent("SOUND"); // The game accepts it only if a YELL prompt is currently active.
-  } else if (soundDifference < SOUND_DELTA_THRESHOLD * 0.5f) {
-    soundBaseline += SOUND_BASELINE_ALPHA * (soundReading - soundBaseline); // Adapt only in quiet periods.
+  float soundDifference = soundReading - soundBaseline; // Compare signal against room noise.
+  if ((nowMs - soundCalibrationStartedAt) < SOUND_CALIBRATION_MS) {
+    soundBaseline += SOUND_CALIBRATION_ALPHA * soundDifference; // Learn the room instead of triggering at startup.
+    soundAboveThresholdSamples = 0;
+    soundArmed = true;
+  } else if (soundArmed) {
+    if (soundDifference >= SOUND_DELTA_THRESHOLD) {
+      if (soundAboveThresholdSamples < SOUND_CONFIRM_SAMPLES) {
+        soundAboveThresholdSamples += 1; // A sustained increase is more likely a deliberate yell.
+      }
+      if (soundAboveThresholdSamples >= SOUND_CONFIRM_SAMPLES
+          && (nowMs - lastSoundEventAt) >= SOUND_COOLDOWN_MS) {
+        lastSoundEventAt = nowMs; // Start the cooldown when the confirmed event is emitted.
+        soundArmed = false; // Do not repeat while the same loud sound remains present.
+        soundQuietSamples = 0;
+        soundAboveThresholdSamples = 0;
+        SendEvent("SOUND"); // The game accepts it only if a YELL prompt is currently active.
+      }
+    } else {
+      soundAboveThresholdSamples = 0;
+      soundBaseline += SOUND_BASELINE_ALPHA * soundDifference; // Adapt only below the trigger level.
+    }
+  } else {
+    soundBaseline += SOUND_BASELINE_ALPHA * soundDifference; // Let a sustained ambient change become the new baseline.
+    soundDifference = soundReading - soundBaseline;
+    if (soundDifference <= SOUND_REARM_DELTA) {
+      if (soundQuietSamples < SOUND_REARM_SAMPLES) {
+        soundQuietSamples += 1;
+      }
+      if (soundQuietSamples >= SOUND_REARM_SAMPLES
+          && (nowMs - lastSoundEventAt) >= SOUND_COOLDOWN_MS) {
+        soundArmed = true; // Re-arm only after quiet and the cooldown have both elapsed.
+        soundQuietSamples = 0;
+      }
+    } else {
+      soundQuietSamples = 0; // Keep the detector latched through a sustained noisy interval.
+    }
   }
 
   const int lightReading = analogRead(LIGHT_SENSOR_PIN); // Read light level for cover detection.
-  if (!lightCovered && lightReading <= LIGHT_COVERED_THRESHOLD) {
-    lightCovered = true; // Lock the sensor until it is uncovered past the hysteresis point.
-    SendEvent("LIGHT"); // One cover action is sent, even if the sensor remains covered.
-  } else if (lightCovered
-             && lightReading >= LIGHT_COVERED_THRESHOLD + LIGHT_RELEASE_HYSTERESIS) {
-    lightCovered = false; // Re-arm only after a sufficiently clear uncover transition.
+  const float lightDrop = lightBaseline - lightReading; // Standard Grove analog light values fall when covered.
+  if (!lightCovered) {
+    if (lightDrop >= LIGHT_COVER_DELTA) {
+      if (lightCoveredSamples < LIGHT_CONFIRM_SAMPLES) {
+        lightCoveredSamples += 1; // Reject a brief ADC fluctuation before accepting a cover.
+      }
+      if (lightCoveredSamples >= LIGHT_CONFIRM_SAMPLES) {
+        lightCovered = true; // Latch one cover action until the sensor becomes bright again.
+        lightCoveredSamples = 0;
+        lightReleasedSamples = 0;
+        SendEvent("LIGHT");
+      }
+    } else {
+      lightCoveredSamples = 0;
+      lightBaseline += LIGHT_BASELINE_ALPHA * (lightReading - lightBaseline);
+    }
+  } else if (lightReading >= (lightBaseline - LIGHT_RELEASE_DELTA)) {
+    if (lightReleasedSamples < LIGHT_RELEASE_SAMPLES) {
+      lightReleasedSamples += 1;
+    }
+    if (lightReleasedSamples >= LIGHT_RELEASE_SAMPLES) {
+      lightCovered = false; // Require a stable uncover before another cover event can be sent.
+      lightReleasedSamples = 0;
+      lightBaseline += LIGHT_BASELINE_ALPHA * (lightReading - lightBaseline);
+    }
+  } else {
+    lightReleasedSamples = 0;
   }
+
+  const int reportedSoundDelta = soundReading - static_cast<int>(soundBaseline + 0.5f);
+  ReportSensorReadings(nowMs, soundReading, reportedSoundDelta, lightReading);
 }
 
 /**
@@ -155,11 +252,20 @@ void setup() {
   Serial.begin(115200); // Must match the desktop game's serial-port configuration.
   const int initialSound = analogRead(SOUND_SENSOR_PIN); // Seed baseline to avoid a startup false trigger.
   soundBaseline = initialSound; // Use current room conditions as the starting sound level.
-  const int initialLight = analogRead(LIGHT_SENSOR_PIN); // Determine whether the light sensor starts covered.
-  lightCovered = (initialLight <= LIGHT_COVERED_THRESHOLD); // Do not report a cover that predates startup.
+  const int initialLight = analogRead(LIGHT_SENSOR_PIN); // Capture the actual room-light level at startup.
+  lightBaseline = initialLight; // Learn the actual room-light level instead of assuming one ADC threshold.
+  lightCovered = false; // Do not report a cover that predates startup.
+  lightCoveredSamples = 0;
+  lightReleasedSamples = 0;
+  soundAboveThresholdSamples = 0;
+  soundQuietSamples = 0;
+  soundArmed = true;
   lastRawButtonPressed = (digitalRead(BUTTON_PIN) == HIGH); // Initialize debounce from the actual button state.
   stableButtonPressed = lastRawButtonPressed; // Avoid a phantom BTN event during initial stabilization.
   buttonChangeStartedAt = millis(); // Start the button debounce clock at boot.
+  soundCalibrationStartedAt = millis(); // Give the sensor a full second to learn the room before game input.
+  lastSensorSampleAt = millis();
+  lastSensorReportAt = millis();
   lastSoundEventAt = millis() - SOUND_COOLDOWN_MS; // Permit the first genuine sound promptly.
   Serial.println("READY"); // Optional diagnostic line; the game safely ignores unknown messages.
 }
