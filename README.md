@@ -35,6 +35,7 @@ Arduino is not connected, which is useful for development and demonstrations.
 .
 ├── CMakeLists.txt                # C++17 build and Raylib dependency
 ├── README.md                     # Setup, controls, wiring, protocol, and testing
+├── run-focusbird.py              # Build, upload Grove firmware, and launch the game
 ├── include/serial_port.h         # Cross-platform non-blocking serial interface
 ├── src/main.cpp                  # Raylib game, prompt state, physics, and UI
 ├── src/serial_port.cpp           # Windows/POSIX serial implementation
@@ -45,18 +46,41 @@ Arduino is not connected, which is useful for development and demonstrations.
 
 - CMake **3.16 or newer**.
 - A C++17 compiler (GCC, Clang, or MSVC).
+- Python 3 for the one-command launcher.
 - Git and an internet connection for the first CMake configure if Raylib is not
   installed on the system. CMake fetches the pinned Raylib 5.5 source then.
 - Raylib's normal platform dependencies and a desktop environment.
 - Optional hardware: an Arduino compatible with the Arduino IDE/CLI and Grove
   button, sound sensor, light sensor, and buzzer modules.
 
+## One-command Grove launch
+
+Connect the Grove Arduino by USB, close Arduino Serial Monitor, then run this
+from the project directory:
+
+```sh
+./run-focusbird.py
+```
+
+On Windows PowerShell, use `py .\run-focusbird.py`. The launcher detects the
+serial port, installs the board core if needed, builds the C++ app, compiles and
+uploads the `.ino`, then starts the game connected to that port. If more than
+one serial board is attached, it asks which one to use. To select a port or
+board explicitly:
+
+```sh
+./run-focusbird.py --port /dev/ttyACM0 --fqbn arduino:avr:uno
+```
+
+The launcher needs CMake, a C++ compiler, Python 3, Arduino CLI, and internet
+access the first time it installs a board core or CMake fetches Raylib.
+
 ## Build the desktop game
 
 ### Windows
 
 1. Install Visual Studio 2022 or Build Tools with **Desktop development with
-   C++**, plus CMake and Git.
+   C++**, plus CMake, Git, and Python 3.
 2. Open a Developer PowerShell in the project directory and run:
 
 ```powershell
@@ -73,7 +97,7 @@ Use `--serial COM3` when starting the game with the Grove board connected.
 
 ```sh
 xcode-select --install
-brew install cmake
+brew install cmake python
 ```
 
 2. Build and run from the project directory:
@@ -92,7 +116,7 @@ On Arch Linux, install the build and X11/audio dependencies:
 
 ```sh
 sudo pacman -Syu
-sudo pacman -S --needed base-devel cmake git pkgconf alsa-lib mesa \
+sudo pacman -S --needed base-devel cmake git pkgconf python alsa-lib mesa \
   libx11 libxrandr libxi libxcursor libxinerama libxext libxfixes \
   libxrender libxxf86vm
 ```
@@ -102,13 +126,13 @@ development dependencies:
 
 ```sh
 sudo apt update
-sudo apt install build-essential cmake git pkg-config libasound2-dev \
+sudo apt install build-essential cmake git python3 pkg-config libasound2-dev \
   libx11-dev libxrandr-dev libxi-dev libxcursor-dev libxinerama-dev \
   libgl1-mesa-dev
 ```
 
 On Fedora, install the equivalent packages with `dnf` (`gcc-c++`, `cmake`,
-`git`, `alsa-lib-devel`, `libX11-devel`, `libXrandr-devel`, `libXi-devel`,
+`git`, `python3`, `alsa-lib-devel`, `libX11-devel`, `libXrandr-devel`, `libXi-devel`,
 `libXcursor-devel`, `libXinerama-devel`, and `mesa-libGL-devel`).
 
 After installing the packages for your distribution, build and run:
@@ -198,7 +222,8 @@ covers Windows, macOS, and Linux. On Arch Linux, install the CLI with
 brew install arduino-cli
 ```
 
-With Arduino CLI, install the AVR board core once, then list attached boards:
+The one-command launcher installs the detected board core if it is missing. For
+manual Arduino CLI use, install the AVR core once and list attached boards:
 
 ```sh
 arduino-cli core install arduino:avr
