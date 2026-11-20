@@ -152,8 +152,8 @@ Connect the Grove components to the pins configured at the top of
 | --- | --- | --- |
 | Grove button | D2 | Start/restart and flap control; module pull-down, pressed is HIGH |
 | Grove buzzer | D3 | Prompt cue and correct/incorrect response feedback |
-| Grove sound sensor | A0 | A sound above the learned room baseline emits `SOUND` |
-| Grove light sensor | A1 | Covering lowers the raw reading from its ambient baseline and emits `LIGHT` |
+| Grove sound sensor | A0 | Raw reading above 800 for three samples emits `SOUND` |
+| Grove light sensor | A1 | Raw reading at or below 10% of ADC full scale emits `LIGHT` |
 
 Pin numbers vary by Grove base shield, board, and wiring. Confirm the labels on
 your board before connecting anything, and change the constants in the sketch
@@ -217,45 +217,38 @@ select **Upload**.
 
 ### Verify and tune the sensors
 
-The firmware prints a diagnostic line every half second at **115200 baud**:
+The firmware prints raw readings and their cutoffs every half second at **115200 baud**:
 
 ```text
-SENSORS <soundRaw> <soundBaseline> <soundDelta> <lightRaw> <lightBaseline>
+SENSORS <soundRaw> <lightRaw> <soundThreshold> <lightThreshold>
 ```
 
 To inspect it, close FocusBird, open Arduino Serial Monitor (or run
 `arduino-cli monitor -p PORT --config 115200`), then reset the board. Use
 `COM3` on Windows, `/dev/cu.usbmodem...` on macOS, or `/dev/ttyACM0` on Linux.
-Keep the room quiet for the first second while the sound baseline calibrates.
-The `soundDelta` value is the current sound reading minus that learned baseline.
 When finished, close the monitor before launching FocusBird; only one app can
 normally own the serial port at a time.
 
-Defaults and tuning guidance:
+These are absolute raw ADC thresholds; no sensor baseline or delta is used:
 
-- `SOUND_DELTA_THRESHOLD` (default `750`): a sound must exceed the learned
-  baseline by this many ADC counts for three consecutive samples. Increase it
-  for even fewer sound triggers; lower it if a deliberate yell does not trigger.
-  A confirmed burst emits once, then must return near baseline before it can
-  emit again. The ADC maximum is 1023, so a baseline above 273 cannot reach a
-  750-count delta; use the reported readings to confirm there is enough headroom.
-- `SOUND_CALIBRATION_MS` (default `1000`): keep the room quiet during this
-  startup interval so steady ambient noise becomes the baseline.
-- `LIGHT_COVER_DELTA` (default `10`): the raw light reading must fall at least
-  this far below its learned uncovered level for three samples. Standard Grove
-  analog light sensors read higher when brighter. If the diagnostic `lightRaw`
-  value does not drop by 10 counts, check the sensor connection and port.
-- `LIGHT_RELEASE_DELTA` (default `5`): requires the reading to return close to
-  the ambient level before another cover event is armed.
+- `SOUND_RAW_THRESHOLD` (default `800`): raw sound readings must be **above 800**
+  for three consecutive samples to emit `SOUND`. A burst emits once and rearms
+  only after the raw value stays at or below 700.
+- `LIGHT_RAW_THRESHOLD` (default `102`): with the Uno's 10-bit ADC maximum of
+  `1023`, 10% full scale is `102`. Raw light readings at or below this value for
+  three samples emit `LIGHT`.
+- `LIGHT_RAW_RELEASE_THRESHOLD` (default `122`): the light sensor must remain
+  above 12% full scale to rearm after a cover.
+- `ANALOG_MAX_VALUE` (default `1023`): set this to the maximum value returned by
+  `analogRead()` if using a board with a different ADC range.
 - `BUTTON_DEBOUNCE_MS`: rejects rapid electrical transitions from the button.
 
-The `SENSORS` line also shows whether the light input changes at all. Check that
-the analog Grove Light Sensor is plugged into **A1**, not an I2C/digital light
-module, and that its Grove cable is seated. Covering should make `lightRaw`
-drop; uncovering should bring it back toward `lightBaseline`. If the values do
-not change, check the sensor, cable, and A1 port before tuning thresholds. The
-firmware emits one `LIGHT` event when the cover is detected, not continuously
-while the sensor remains covered.
+The `SENSORS` line shows exactly what the game is comparing. Check that the
+analog Grove Light Sensor is plugged into **A1**, not an I2C/digital light
+module, and that its cable is seated. Covering should bring `lightRaw` to
+`lightThreshold` or lower; if the raw reading never gets that low, check the
+sensor, cable, A1 port, and `ANALOG_MAX_VALUE`. The firmware emits one `LIGHT`
+event per cover and rearms after the reading rises above the release threshold.
 
 ## Connect the game to the Arduino
 
@@ -297,7 +290,7 @@ Each message is a newline-terminated ASCII line:
 | Arduino → game | `BTN` | Debounced button press; starts/restarts on menus and flaps during play |
 | Arduino → game | `SOUND` | Confirmed sound burst crossed the configured threshold |
 | Arduino → game | `LIGHT` | Light sensor transitioned to covered |
-| Arduino → game | `SENSORS ...` | Raw sensor/baseline diagnostics, printed twice per second |
+| Arduino → game | `SENSORS ...` | Raw sensor readings and cutoffs, printed twice per second |
 | Game → Arduino | `BUZZER 900 70` | Play a 900 Hz prompt cue for 70 ms |
 | Game → Arduino | `BUZZER 1350 100` | Short positive feedback tone |
 | Game → Arduino | `BUZZER 380 150` | Lower-pitched incorrect-action feedback |
@@ -357,9 +350,9 @@ frame time, with a safety clamp after long frame stalls.
    **SEARCHING FOR GROVE KIT** while the port is unavailable).
 3. Press the Grove button on the title screen to start. During play it only
    flaps; verify button presses do not answer or penalize either sensor prompt.
-4. Use Serial Monitor to confirm that covering A1 lowers `lightRaw` by at least
-   `LIGHT_COVER_DELTA`; check that a deliberate yell raises `soundDelta` above
-   `SOUND_DELTA_THRESHOLD`. Close the monitor, then test both prompts in-game.
+4. Use Serial Monitor to verify `soundRaw` rises above 800 when yelling and
+   `lightRaw` falls to 10% full scale or lower when covered. Close the monitor,
+   then test both prompts in-game.
 5. Make a deliberate sound during a YELL prompt and cover the light sensor during
    a COVER prompt; verify each is accepted only during its matching window.
 6. Cover the light sensor before a COVER prompt, then uncover it. Confirm the
@@ -376,10 +369,10 @@ frame time, with a safety clamp after long frame stalls.
 | CMake cannot find Raylib | Ensure the first configure can access GitHub, or install Raylib 5.x and expose its CMake package. |
 | Linux build reports missing X11/audio dependencies | Install the Raylib development dependencies for your Linux distribution, then rerun CMake configure. |
 | Serial port cannot open | Confirm the selected path, close Serial Monitor, check device permissions, and ensure the board finished uploading; FocusBird keeps retrying the selected port. |
-| Sound fires in room noise | Let the room stay quiet during the first second after reset, then inspect `soundDelta`; the default threshold is now 750 and each burst needs three high samples. |
-| Sound prompt does not trigger | Inspect `soundDelta` while yelling; lower `SOUND_DELTA_THRESHOLD` gradually and check that the analog sound sensor is plugged into A0. |
-| Light prompt does not trigger | Confirm the analog Grove Light Sensor is plugged into A1. Compare `lightRaw` with `lightBaseline` uncovered and covered; the default cover delta is only 10 counts. |
-| Light triggers without covering | Increase `LIGHT_COVER_DELTA`; even small light changes can trigger at the default setting. |
+| Sound fires in room noise | Inspect `soundRaw`; it must be above 800 for three samples. Check the sound sensor and A0 connection. |
+| Sound prompt does not trigger | Inspect `soundRaw` while yelling. If it does not exceed 800, lower `SOUND_RAW_THRESHOLD` and verify the sensor is on A0. |
+| Light prompt does not trigger | Confirm the analog Grove Light Sensor is plugged into A1 and `lightRaw` reaches `lightThreshold` or lower when covered. Check `ANALOG_MAX_VALUE` for the board's ADC range. |
+| Light triggers without covering | The raw light value is reaching 10% full scale; raise `LIGHT_RAW_THRESHOLD` if you need a less sensitive cutoff. |
 | One physical action triggers more than once | Increase the sound cooldown or button debounce; verify the light hysteresis and release behavior. |
 | Buzzer does not sound | Check the configured buzzer pin, module polarity/type, and whether that board supports `tone()` on the selected pin. |
 | Window opens but keyboard input seems ignored | Start a run with Enter; Y and C only answer a prompt while its gate is in range. |
