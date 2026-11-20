@@ -34,7 +34,7 @@ enum class ScreenState {
 };
 
 enum class Action {
-    Button, // Grove button press, or Space/Up on the keyboard.
+    Button, // [CHG-01] Grove button input. Space/Up now flap separately and are not button answers.
     Sound, // Sound sensor event, or Y on the keyboard.
     Light // Covered-light-sensor event, or C on the keyboard.
 };
@@ -81,7 +81,7 @@ struct Game {
     float groundOffset = 0.0f; // Scrolling ground texture offset for a sense of movement.
     int score = 0; // Number of safely passed obstacles.
     int correctResponses = 0; // Number of prompts answered with the expected action.
-    int incorrectResponses = 0; // Number of wrong actions during an active prompt.
+    int incorrectResponses = 0; // [REVIEW] Mismatched actions are now ignored, so this counter never increases.
     int missedPrompts = 0; // Number of prompt windows that expired without an answer.
     int reactionCount = 0; // Number of correctly answered prompts with a measured reaction time.
     float reactionTimeTotal = 0.0f; // Sum of correct prompt response times in seconds.
@@ -114,7 +114,7 @@ const char* PromptActionText(PromptType prompt) {
  */
 bool ParseSerialAction(const std::string& line, Action& action) {
     if (line == "BTN") {
-        action = Action::Button; // Hardware button press is also the flap action.
+        action = Action::Button; // [CHG-01] Grove button is a prompt answer, not a flap action.
         return true;
     }
     if (line == "SOUND") {
@@ -201,13 +201,13 @@ Obstacle* FindActivePrompt(Game& game) {
 }
 
 /**
- * @brief Apply a button/sound/light action to the bird and active prompt.
+ * @brief Handle Grove button/sound/light prompt responses (bird flapping is separate).
  * @param game Current game state to update.
  * @param action Input event from keyboard or Arduino.
  * @param serial Optional open serial port used to play a buzzer feedback tone.
- * @return No value; the action can flap, answer a prompt, or be ignored.
+ * @return No value; a sensor action can answer a prompt or be ignored; it does not flap.
  */
-void HandleAction(Game& game, Action action, SerialPort* serial) {
+void HandleAction(Game& game, Action action, SerialPort* serial) { // [CHG-01] Removed button-to-flap behavior.
     if (game.screen != ScreenState::Playing) {
         return; // Actions outside a run do not affect bird physics or prompt statistics.
     }
@@ -216,13 +216,15 @@ void HandleAction(Game& game, Action action, SerialPort* serial) {
         return; // An early/late sensor event cannot accidentally count for a future prompt.
     }
     if (action == Action::Button && active->prompt != PromptType::Button) {
-        return; // Preserve button-as-flight control without penalizing a flap during another prompt.
+        return; // [REVIEW] Button-on-other-prompt guard remains; now redundant with !matches below.
     }
 
     const bool matches = (active->prompt == PromptType::Button && action == Action::Button)
         || (active->prompt == PromptType::Yell && action == Action::Sound)
         || (active->prompt == PromptType::Cover && action == Action::Light);
-    if (matches) {
+        
+    }
+    if (matches) { // [REVIEW] Always true after the return above; the else branch below is unreachable.
         active->result = PromptResult::Correct; // Mark the gate answered to ignore repeat sensor events.
         game.correctResponses += 1; // Record this response for the final results screen.
         const float reactionTime = std::max(0.0f, game.elapsedSeconds - active->promptStartedAt); // Time from prompt activation to event receipt.
@@ -236,7 +238,7 @@ void HandleAction(Game& game, Action action, SerialPort* serial) {
         if (serial != nullptr && serial->IsOpen()) {
             serial->WriteLine("BUZZER 1350 100"); // Send a short high tone as success feedback.
         }
-    } else {
+    } else { // [REVIEW] Unreachable because mismatches returned already; incorrectResponses stays zero.
         active->result = PromptResult::Failed; // First wrong response closes this prompt window.
         game.incorrectResponses += 1; // Preserve a separate incorrect-response statistic.
         LoseLife(game, "NOT THAT ONE - TRY THE NEXT!"); // Explain the mistake and spend one life.
@@ -488,7 +490,7 @@ void DrawTitle(const Game& game) {
     DrawText(TextFormat("Selected: %s", game.difficulty.label), ScreenWidth / 2 - 92, 267, 22, WHITE); // Current difficulty.
     DrawText("1  EASY       2  CHALLENGE", ScreenWidth / 2 - 162, 308, 21, LIME); // Keyboard difficulty shortcuts.
     DrawText("ENTER  START GAME", ScreenWidth / 2 - 132, 356, 23, GOLD); // Start instruction.
-    DrawText("SPACE / UP = flap (button)", 270, 411, 18, RAYWHITE); // Keyboard button fallback.
+    DrawText("SPACE / UP = flap (button)", 270, 411, 18, RAYWHITE); // [REVIEW] Outdated label: Space/Up flap only.
     DrawText("Y = yell input       C = cover input", 270, 439, 18, RAYWHITE); // Keyboard sensor fallbacks.
     DrawText("Arduino events are accepted only during the matching prompt.",
              207, 481, 17, LIGHTGRAY); // Clarify timing and input matching.
@@ -618,7 +620,7 @@ int main(int argc, char** argv) {
         if (IsKeyPressed(KEY_ESCAPE)) {
             running = false; // Escape exits from any screen without changing the run result.
         }
-if (serialConnected) {
+if (serialConnected) { // [CHG-03] Read Arduino events even on title and game-over screens.
     const std::vector<std::string> serialLines = serial.ReadLines();
 
     for (const std::string& line : serialLines) {
@@ -630,11 +632,11 @@ if (serialConnected) {
                  game.screen == ScreenState::GameOver) &&
                  hardwareAction == Action::Button) {
 
-                StartGame(game);
+                StartGame(game); // [CHG-03] Physical Grove button now starts/restarts game.
 
             } else if (game.screen == ScreenState::Playing) {
 
-                HandleAction(game, hardwareAction, &serial);
+                HandleAction(game, hardwareAction, &serial); // [CHG-03] During gameplay, handle as prompt input.
 
             }
         }
@@ -658,7 +660,7 @@ if (serialConnected) {
             }
         } else {
             if (IsKeyPressed(KEY_SPACE) || IsKeyPressed(KEY_UP)) {
-            game.birdVelocity = FlapVelocity; 
+            game.birdVelocity = FlapVelocity; // [CHG-04] Space/Up only control the bird; do not answer BTN prompts.
             }
             if (IsKeyPressed(KEY_Y)) {
                 HandleAction(game, Action::Sound, serialConnected ? &serial : nullptr); // Simulate sound sensor event.
@@ -680,10 +682,6 @@ if (serialConnected) {
         }
         EndDrawing(); // Present the completed frame to the window.
     }
-
-    CloseWindow(); // Release Raylib display/audio/input resources before process exit.
-    return 0; // Report normal completion to the operating system.
-}
 
     CloseWindow(); // Release Raylib display/audio/input resources before process exit.
     return 0; // Report normal completion to the operating system.
