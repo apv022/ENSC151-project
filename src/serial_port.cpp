@@ -176,8 +176,11 @@ std::vector<std::string> SerialPort::ReadLines() {
 #ifdef _WIN32
     DWORD bytesRead = 0; // Win32 fills this with the number of bytes received.
     const HANDLE device = reinterpret_cast<HANDLE>(handle_);
-    if (ReadFile(device, bytes.data(), static_cast<DWORD>(bytes.size()), &bytesRead, nullptr)
-        && bytesRead > 0) {
+    if (!ReadFile(device, bytes.data(), static_cast<DWORD>(bytes.size()), &bytesRead, nullptr)) {
+        Close(); // Treat a device-level read error as a disconnect so the app can reconnect.
+        return lines;
+    }
+    if (bytesRead > 0) {
         incomingBuffer_.append(bytes.data(), bytesRead); // Preserve bytes until newline parsing.
     }
 #else
@@ -226,9 +229,13 @@ bool SerialPort::WriteLine(const std::string& line) {
 #ifdef _WIN32
     DWORD bytesWritten = 0; // Win32 reports the actual number of bytes sent.
     const HANDLE device = reinterpret_cast<HANDLE>(handle_);
-    return WriteFile(device, message.data(), static_cast<DWORD>(message.size()),
-                     &bytesWritten, nullptr)
-        && bytesWritten == message.size(); // Reject partial writes to preserve command framing.
+    if (!WriteFile(device, message.data(), static_cast<DWORD>(message.size()),
+                   &bytesWritten, nullptr)
+        || bytesWritten != message.size()) {
+        Close(); // A failed/partial command means the connection is no longer trustworthy.
+        return false;
+    }
+    return true;
 #else
     std::size_t offset = 0; // Track progress in case the OS accepts a partial write.
     while (offset < message.size()) { // Continue until the full short command is transmitted.
@@ -239,6 +246,9 @@ bool SerialPort::WriteLine(const std::string& line) {
         } else if (bytesWritten < 0 && errno == EINTR) {
             continue; // Retry when a signal interrupted the system call.
         } else {
+            if (bytesWritten == 0 || (errno != EAGAIN && errno != EWOULDBLOCK)) {
+                Close(); // Leave transient non-blocking backpressure available for the next command.
+            }
             return false; // Report a partial/error write without hanging the render loop.
         }
     }

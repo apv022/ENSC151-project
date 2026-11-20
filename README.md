@@ -25,8 +25,9 @@ Arduino is not connected, which is useful for development and demonstrations.
 - Results screen reports correct, incorrect, and missed prompts separately, as
   well as average and fastest correct reaction time.
 - Non-blocking serial communications: loss of the Arduino connection does not
-  stop the game.
+  stop the game; the selected port reconnects automatically.
 - Keyboard fallback for all three inputs.
+- Grove button can start/restart a run, flap during play, and answer button prompts.
 
 ## Project layout
 
@@ -90,6 +91,7 @@ its CMake package discoverable before configuring.
 | `2` | Select Challenge on title screen | — |
 | `T` | Cycle background theme on title screen | — |
 | `B` | Cycle bird color on title screen | — |
+| Grove button | Start/restart; flap during play | Button prompt |
 | `Space` or `Up` | Flap | Button prompt |
 | `Y` | Simulate a sound sensor event | Yell prompt |
 | `C` | Simulate covering the light sensor | Cover prompt |
@@ -108,7 +110,7 @@ Connect the Grove components to the pins configured at the top of
 
 | Component | Default pin | Role |
 | --- | --- | --- |
-| Grove button | D2 | Flap and button-prompt response; uses `INPUT_PULLUP` (pressed is LOW) |
+| Grove button | D2 | Flap and button-prompt response; module pull-down, pressed is HIGH |
 | Grove buzzer | D3 | Prompt cue and correct/incorrect response feedback |
 | Grove sound sensor | A0 | A sound above the learned room baseline emits `SOUND` |
 | Grove light sensor | A1 | Covering the sensor below its threshold emits `LIGHT` |
@@ -117,6 +119,13 @@ Pin numbers vary by Grove base shield, board, and wiring. Confirm the labels on
 your board before connecting anything, and change the constants in the sketch
 if your setup differs. Use only sensor/output voltage levels supported by the
 selected Arduino board.
+
+This sketch uses the Grove button, sound sensor, light sensor, and buzzer. It
+does not depend on a particular Arduino Uno revision; select the board that
+matches your Grove base shield and hardware.
+The standard Grove button module has an onboard pull-down resistor and reads
+HIGH when pressed, so the sketch configures D2 as a normal input (not
+`INPUT_PULLUP`).
 
 ### Upload firmware
 
@@ -170,9 +179,11 @@ On Linux, access may require membership in the system's serial-device group
 (often `dialout`) and a new login session. Do not run the game as root just to
 work around normal device permissions. Close Arduino Serial Monitor first.
 
-If the requested port cannot be opened, FocusBird prints a warning and starts
-in keyboard mode. The status in the HUD changes to **KEYBOARD MODE** if the
-serial device later disconnects.
+If the requested port cannot be opened, FocusBird prints a warning and keeps
+keyboard controls available while retrying every two seconds. The title screen
+and HUD show **SEARCHING FOR GROVE KIT** until the port opens, then
+**GROVE KIT CONNECTED**. If the device disconnects, the game continues and
+reconnects automatically when the same port is available again.
 
 ## Serial protocol
 
@@ -239,9 +250,10 @@ frame time, with a safety clamp after long frame stalls.
 ### Hardware and integration checks
 
 1. Upload the firmware and confirm the board appears as a serial device.
-2. Launch the game with the device path and check **ARDUINO CONNECTED**.
-3. Press the button and verify the bird flaps; during a button prompt, verify it
-   also records a correct answer.
+2. Launch the game with the device path and check **GROVE KIT CONNECTED** (or
+   **SEARCHING FOR GROVE KIT** while the port is unavailable).
+3. Press the Grove button on the title screen to start. During play it flaps the
+   bird and, during a button prompt, also records a correct answer.
 4. Make a deliberate sound during a YELL prompt and cover the light sensor during
    a COVER prompt; verify each is accepted only during its matching window.
 5. Cover the light sensor before a COVER prompt, then uncover it. Confirm the
@@ -257,7 +269,7 @@ frame time, with a safety clamp after long frame stalls.
 | --- | --- |
 | CMake cannot find Raylib | Ensure the first configure can access GitHub, or install Raylib 5.x and expose its CMake package. |
 | Linux build reports missing X11/audio dependencies | Install the Raylib development dependencies for your Linux distribution, then rerun CMake configure. |
-| Serial port cannot open | Confirm the selected path, close Serial Monitor, check device permissions, and ensure the board finished uploading. |
+| Serial port cannot open | Confirm the selected path, close Serial Monitor, check device permissions, and ensure the board finished uploading; FocusBird keeps retrying the selected port. |
 | Inputs are too sensitive | Increase `SOUND_DELTA_THRESHOLD`; adjust the light threshold using observed raw values. |
 | Sound prompt does not trigger | Lower `SOUND_DELTA_THRESHOLD`, check the sensor analog output, and test closer to the microphone. |
 | Light prompt triggers while uncovered | Compare uncovered/covered readings and lower `LIGHT_COVERED_THRESHOLD` as appropriate. |

@@ -24,6 +24,7 @@ constexpr float FlapVelocity = -350.0f; // Upward velocity applied by a flap act
 constexpr float ObstacleWidth = 72.0f; // Width of each top/bottom obstacle column.
 constexpr float PromptLeadDistance = 420.0f; // Obstacle distance at which its prompt becomes active.
 constexpr int StartingLives = 3; // Number of misses/collisions allowed before game over.
+constexpr float SerialReconnectInterval = 2.0f; // Retry a requested Arduino port without restarting the game.
 
 // ----------------------------- Gameplay data types -----------------------------
 
@@ -580,7 +581,21 @@ void DrawBackground(const Game& game) {
  * @param serialConnected Whether an Arduino serial connection is currently open.
  * @return No value; draws text and panels on top of the playfield.
  */
-void DrawHud(Game& game, bool serialConnected) {
+const char* SerialStatusText(bool serialConnected, bool serialRequested) {
+    if (serialConnected) {
+        return "GROVE KIT CONNECTED";
+    }
+    return serialRequested ? "SEARCHING FOR GROVE KIT" : "KEYBOARD MODE";
+}
+
+Color SerialStatusColor(bool serialConnected, bool serialRequested) {
+    if (serialConnected) {
+        return LIME;
+    }
+    return serialRequested ? GOLD : RAYWHITE;
+}
+
+void DrawHud(Game& game, bool serialConnected, bool serialRequested) {
     DrawRectangle(0, 0, ScreenWidth, 64, Fade(DARKBLUE, 0.76f)); // Dark header improves text contrast.
     DrawText(TextFormat("SCORE  %03i", game.score), 24, 18, 28, WHITE); // Passed gate count.
     DrawText(TextFormat("LIVES  %i", game.lives), 245, 20, 23, GOLD); // Remaining mistakes.
@@ -589,8 +604,8 @@ void DrawHud(Game& game, bool serialConnected) {
         ? game.reactionTimeTotal / game.reactionCount : 0.0f; // Average correct response time so far.
     DrawText(game.reactionCount > 0 ? TextFormat("AVG RT %.2fs", averageReaction) : "AVG RT --",
              525, 24, 17, WHITE); // Show reaction timing separately from the gate score.
-    const char* connectionText = serialConnected ? "ARDUINO CONNECTED" : "KEYBOARD MODE"; // Explain active input source.
-    const Color connectionColor = serialConnected ? LIME : RAYWHITE; // Highlight the physical-device connection.
+    const char* connectionText = SerialStatusText(serialConnected, serialRequested); // Explain the active input source.
+    const Color connectionColor = SerialStatusColor(serialConnected, serialRequested); // Highlight connection state.
     DrawText(connectionText, ScreenWidth - MeasureText(connectionText, 16) - 20, 24, 16,
              connectionColor); // Keep status at the upper-right edge.
 
@@ -614,7 +629,7 @@ void DrawHud(Game& game, bool serialConnected) {
  * @param game Current state supplies the selected difficulty, theme, and bird color.
  * @return No value; draws the title menu.
  */
-void DrawTitle(const Game& game) {
+void DrawTitle(const Game& game, bool serialConnected, bool serialRequested) {
     DrawBackground(game); // Reuse the same setting so menu and game feel connected.
     DrawRectangle(150, 80, 660, 490, Fade(DARKBLUE, 0.82f)); // Centered title card.
     const char* title = "FOCUSBIRD"; // Project name presented prominently.
@@ -623,7 +638,8 @@ void DrawTitle(const Game& game) {
     DrawText(subtitle, ScreenWidth / 2 - MeasureText(subtitle, 22) / 2, 216, 22, RAYWHITE); // Center the purpose statement.
     DrawText(TextFormat("Selected: %s", game.difficulty.label), ScreenWidth / 2 - 92, 267, 22, WHITE); // Current difficulty.
     DrawText("1  EASY       2  CHALLENGE", ScreenWidth / 2 - 162, 308, 21, LIME); // Keyboard difficulty shortcuts.
-    DrawText("ENTER  START GAME", ScreenWidth / 2 - 132, 348, 23, GOLD); // Start instruction.
+    const char* startText = "ENTER OR GROVE BUTTON  START GAME";
+    DrawText(startText, ScreenWidth / 2 - MeasureText(startText, 21) / 2, 348, 21, GOLD);
     const char* backgroundText = TextFormat("T  BACKGROUND: %s", BackgroundThemeName(game.backgroundTheme));
     DrawText(backgroundText, ScreenWidth / 2 - MeasureText(backgroundText, 19) / 2, 386, 19, SKYBLUE);
     const char* birdColorText = TextFormat("B  BIRD COLOR: %s", BirdColorName(game.birdColor));
@@ -633,8 +649,11 @@ void DrawTitle(const Game& game) {
     DrawCircleLines(670, 425, 10.0f, RAYWHITE);
     DrawText("SPACE / UP = flap (button)", 270, 449, 18, RAYWHITE); // Keyboard button fallback.
     DrawText("Y = yell input       C = cover input", 270, 476, 18, RAYWHITE); // Keyboard sensor fallbacks.
-    DrawText("Arduino events are accepted only during the matching prompt.",
-             207, 510, 17, LIGHTGRAY); // Clarify timing and input matching.
+    DrawText("Grove button starts; sensor events answer matching prompts.",
+             195, 505, 16, LIGHTGRAY); // Explain the hardware controls before play begins.
+    const char* statusText = SerialStatusText(serialConnected, serialRequested);
+    DrawText(statusText, ScreenWidth / 2 - MeasureText(statusText, 16) / 2, 532, 16,
+             SerialStatusColor(serialConnected, serialRequested));
 }
 
 /**
@@ -643,13 +662,13 @@ void DrawTitle(const Game& game) {
  * @param serialConnected Whether the optional hardware link is open.
  * @return No value; draws one complete play frame.
  */
-void DrawPlaying(Game& game, bool serialConnected) {
+void DrawPlaying(Game& game, bool serialConnected, bool serialRequested) {
     DrawBackground(game); // Draw sky and floor first so obstacles overlay them.
     for (const Obstacle& obstacle : game.obstacles) { // Paint each active gate behind the bird.
         DrawObstacle(obstacle, game.difficulty); // Gate color and icon communicate its state/type.
     }
     DrawBird(game.birdY, game.birdColor); // Fixed-x bird is drawn after obstacles for clear overlap visibility.
-    DrawHud(game, serialConnected); // Add score, lives, hardware status, and active prompt.
+    DrawHud(game, serialConnected, serialRequested); // Add score, lives, hardware status, and active prompt.
 }
 
 /**
@@ -673,7 +692,9 @@ void DrawGameOver(const Game& game) {
                  : "Reaction time: no correct responses",
              250, 390, 20, SKYBLUE); // Report prompt timing independently from score and misses.
     DrawText(TextFormat("Play time: %.1f seconds", game.elapsedSeconds), 340, 426, 22, LIGHTGRAY); // Session duration.
-    DrawText("ENTER = PLAY AGAIN     ESC = QUIT", 264, 480, 20, GOLD); // Restart/exit controls.
+    DrawText("ENTER OR GROVE BUTTON = PLAY AGAIN", 258, 470, 18, GOLD);
+    DrawText("ESC = QUIT", ScreenWidth / 2 - MeasureText("ESC = QUIT", 18) / 2,
+             500, 18, LIGHTGRAY);
 }
 
 /**
@@ -740,14 +761,16 @@ int main(int argc, char** argv) {
     }
 
     SerialPort serial; // Own the optional Arduino connection for the application's lifetime.
+    const bool serialRequested = !serialName.empty(); // Retry only when the player selected a device.
     bool serialConnected = false; // Status shown to players and updated if the device disconnects.
-    if (!serialName.empty()) {
+    if (serialRequested) {
         serialConnected = serial.Open(serialName, 115200); // Connect using the firmware's configured baud.
         if (!serialConnected) {
             std::cerr << "Could not open serial port '" << serialName
-                      << "'. Continuing in keyboard mode.\n"; // Hardware is optional, not a launch blocker.
+                      << "'. Keyboard controls remain available; retrying automatically.\n";
         }
     }
+    float serialReconnectTimer = SerialReconnectInterval;
 
     SetConfigFlags(FLAG_MSAA_4X_HINT | FLAG_VSYNC_HINT); // Smooth primitive edges and synchronize drawing.
     InitWindow(ScreenWidth, ScreenHeight, "FocusBird - Focus, flap, fly!"); // Create the Raylib desktop window.
@@ -757,6 +780,16 @@ int main(int argc, char** argv) {
     bool running = true; // Main-loop flag remains true until Escape or window close.
     while (running && !WindowShouldClose()) { // Continue until the player/window requests exit.
         const float frameTime = std::min(GetFrameTime(), 0.05f); // Clamp long stalls to avoid large physics jumps.
+        if (!serialConnected && serialRequested) {
+            serialReconnectTimer -= frameTime;
+            if (serialReconnectTimer <= 0.0f) {
+                serialConnected = serial.Open(serialName, 115200);
+                serialReconnectTimer = SerialReconnectInterval;
+                if (serialConnected) {
+                    std::cerr << "Connected to serial port '" << serialName << "'.\n";
+                }
+            }
+        }
 
         if (IsKeyPressed(KEY_ESCAPE)) {
             running = false; // Escape exits from any screen without changing the run result.
@@ -764,15 +797,20 @@ int main(int argc, char** argv) {
 
         if (serialConnected) {
             const std::vector<std::string> serialLines = serial.ReadLines(); // Collect events before state-specific input.
-            if (game.screen == ScreenState::Playing) {
-                for (const std::string& line : serialLines) { // Route only events received during active gameplay.
-                    Action hardwareAction = Action::Button; // Temporary output populated for recognized event lines.
-                    if (ParseSerialAction(line, hardwareAction)) {
+            for (const std::string& line : serialLines) {
+                Action hardwareAction = Action::Button;
+                if (ParseSerialAction(line, hardwareAction)) {
+                    if (game.screen == ScreenState::Playing) {
                         HandleAction(game, hardwareAction, &serial); // Treat physical and keyboard actions identically.
+                    } else if (hardwareAction == Action::Button) {
+                        StartGame(game); // Let the Grove button start or restart a session.
                     }
                 }
             }
             serialConnected = serial.IsOpen(); // Detect unplugging/errors on every screen, not just gameplay.
+            if (serialConnected) {
+                serialReconnectTimer = SerialReconnectInterval; // Wait a full interval before retrying a later disconnect.
+            }
         }
 
         if (game.screen == ScreenState::Title) {
@@ -811,9 +849,9 @@ int main(int argc, char** argv) {
 
         BeginDrawing(); // Begin submitting the current rendered frame.
         if (game.screen == ScreenState::Title) {
-            DrawTitle(game); // Show menu and controls while waiting to start.
+            DrawTitle(game, serialConnected, serialRequested); // Show controls and live Arduino status.
         } else if (game.screen == ScreenState::Playing) {
-            DrawPlaying(game, serialConnected); // Show the live game and its HUD.
+            DrawPlaying(game, serialConnected, serialRequested); // Show the live game and its HUD.
         } else {
             DrawGameOver(game); // Show statistics and replay instructions.
         }

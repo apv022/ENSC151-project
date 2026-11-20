@@ -15,7 +15,7 @@
 
 // ---------------------------- Hardware configuration -------------------------
 
-const uint8_t BUTTON_PIN = 2; // Grove button digital output; active LOW with INPUT_PULLUP.
+const uint8_t BUTTON_PIN = 2; // Grove button digital output; its pull-down makes a press read HIGH.
 const uint8_t BUZZER_PIN = 3; // Grove buzzer digital output; uses tone() for feedback.
 const uint8_t SOUND_SENSOR_PIN = A0; // Analog output from the Grove sound sensor.
 const uint8_t LIGHT_SENSOR_PIN = A1; // Analog output from the Grove light sensor.
@@ -55,7 +55,7 @@ void SendEvent(const char* eventName) {
  * @return No value; emits BTN once when a stable press begins.
  */
 void UpdateButton(unsigned long nowMs) {
-  const bool rawPressed = (digitalRead(BUTTON_PIN) == LOW); // INPUT_PULLUP makes LOW the pressed state.
+  const bool rawPressed = (digitalRead(BUTTON_PIN) == HIGH); // Standard Grove button is HIGH while pressed.
   if (rawPressed != lastRawButtonPressed) {
     lastRawButtonPressed = rawPressed; // Remember the latest electrical transition.
     buttonChangeStartedAt = nowMs; // Restart the debounce timer after a contact change.
@@ -147,7 +147,7 @@ void ReadComputerCommands() {
  * @return No value; emits a READY line after initialization.
  */
 void setup() {
-  pinMode(BUTTON_PIN, INPUT_PULLUP); // Use the internal pull-up for a common two-wire Grove button.
+  pinMode(BUTTON_PIN, INPUT); // Grove button module already provides a pull-down resistor.
   pinMode(BUZZER_PIN, OUTPUT); // Configure the buzzer as an Arduino-driven output.
   pinMode(SOUND_SENSOR_PIN, INPUT); // Select analog input mode for sound measurements.
   pinMode(LIGHT_SENSOR_PIN, INPUT); // Select analog input mode for light measurements.
@@ -157,7 +157,7 @@ void setup() {
   soundBaseline = initialSound; // Use current room conditions as the starting sound level.
   const int initialLight = analogRead(LIGHT_SENSOR_PIN); // Determine whether the light sensor starts covered.
   lightCovered = (initialLight <= LIGHT_COVERED_THRESHOLD); // Do not report a cover that predates startup.
-  lastRawButtonPressed = (digitalRead(BUTTON_PIN) == LOW); // Initialize debounce from the actual button state.
+  lastRawButtonPressed = (digitalRead(BUTTON_PIN) == HIGH); // Initialize debounce from the actual button state.
   stableButtonPressed = lastRawButtonPressed; // Avoid a phantom BTN event during initial stabilization.
   buttonChangeStartedAt = millis(); // Start the button debounce clock at boot.
   lastSoundEventAt = millis() - SOUND_COOLDOWN_MS; // Permit the first genuine sound promptly.
