@@ -233,19 +233,19 @@ normally own the serial port at a time.
 
 Defaults and tuning guidance:
 
-- `SOUND_DELTA_THRESHOLD` (default `450`): a sound must exceed the learned
+- `SOUND_DELTA_THRESHOLD` (default `750`): a sound must exceed the learned
   baseline by this many ADC counts for three consecutive samples. Increase it
-  in steps (for example, to `500`) if the room still triggers; lower it if a
-  deliberate yell does not trigger. A confirmed burst emits once, then must
-  return near baseline before it can emit again.
+  for even fewer sound triggers; lower it if a deliberate yell does not trigger.
+  A confirmed burst emits once, then must return near baseline before it can
+  emit again. The ADC maximum is 1023, so a baseline above 273 cannot reach a
+  750-count delta; use the reported readings to confirm there is enough headroom.
 - `SOUND_CALIBRATION_MS` (default `1000`): keep the room quiet during this
   startup interval so steady ambient noise becomes the baseline.
-- `LIGHT_COVER_DELTA` (default `100`): the raw light reading must fall at least
+- `LIGHT_COVER_DELTA` (default `10`): the raw light reading must fall at least
   this far below its learned uncovered level for three samples. Standard Grove
   analog light sensors read higher when brighter. If the diagnostic `lightRaw`
-  value clearly drops when covered but by less than 100 counts, lower this value
-  (for example, to `60`).
-- `LIGHT_RELEASE_DELTA` (default `45`): requires the reading to return close to
+  value does not drop by 10 counts, check the sensor connection and port.
+- `LIGHT_RELEASE_DELTA` (default `5`): requires the reading to return close to
   the ambient level before another cover event is armed.
 - `BUTTON_DEBOUNCE_MS`: rejects rapid electrical transitions from the button.
 
@@ -376,10 +376,10 @@ frame time, with a safety clamp after long frame stalls.
 | CMake cannot find Raylib | Ensure the first configure can access GitHub, or install Raylib 5.x and expose its CMake package. |
 | Linux build reports missing X11/audio dependencies | Install the Raylib development dependencies for your Linux distribution, then rerun CMake configure. |
 | Serial port cannot open | Confirm the selected path, close Serial Monitor, check device permissions, and ensure the board finished uploading; FocusBird keeps retrying the selected port. |
-| Sound fires in room noise | Let the room stay quiet during the first second after reset, then inspect `soundDelta`; raise `SOUND_DELTA_THRESHOLD` in 20–40 count steps. Each burst now needs three high samples and cannot repeat until it quiets. Since the ADC tops out at 1023, a baseline above 573 leaves less than 450 counts of headroom; lower the threshold if yells cannot reach it. |
+| Sound fires in room noise | Let the room stay quiet during the first second after reset, then inspect `soundDelta`; the default threshold is now 750 and each burst needs three high samples. |
 | Sound prompt does not trigger | Inspect `soundDelta` while yelling; lower `SOUND_DELTA_THRESHOLD` gradually and check that the analog sound sensor is plugged into A0. |
-| Light prompt does not trigger | Confirm the analog Grove Light Sensor is plugged into A1. Compare `lightRaw` with `lightBaseline` uncovered and covered; lower `LIGHT_COVER_DELTA` if the drop is smaller than its setting. |
-| Light triggers without covering | Increase `LIGHT_COVER_DELTA`; the sensor must stay below its ambient baseline for three samples. |
+| Light prompt does not trigger | Confirm the analog Grove Light Sensor is plugged into A1. Compare `lightRaw` with `lightBaseline` uncovered and covered; the default cover delta is only 10 counts. |
+| Light triggers without covering | Increase `LIGHT_COVER_DELTA`; even small light changes can trigger at the default setting. |
 | One physical action triggers more than once | Increase the sound cooldown or button debounce; verify the light hysteresis and release behavior. |
 | Buzzer does not sound | Check the configured buzzer pin, module polarity/type, and whether that board supports `tone()` on the selected pin. |
 | Window opens but keyboard input seems ignored | Start a run with Enter; Y and C only answer a prompt while its gate is in range. |

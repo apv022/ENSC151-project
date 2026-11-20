@@ -20,10 +20,10 @@ const uint8_t BUZZER_PIN = 3; // Grove buzzer digital output; uses tone() for fe
 const uint8_t SOUND_SENSOR_PIN = A0; // Analog output from the Grove sound sensor.
 const uint8_t LIGHT_SENSOR_PIN = A1; // Analog output from the Grove light sensor.
 
-const int SOUND_DELTA_THRESHOLD = 450; // Yell must clearly exceed the calibrated room-noise level.
+const int SOUND_DELTA_THRESHOLD = 750; // Require a near-full-scale sound burst above the room baseline.
 const int SOUND_REARM_DELTA = 85; // Sound must settle near baseline before another yell can count.
-const int LIGHT_COVER_DELTA = 100; // Covering must lower the light reading this far from ambient.
-const int LIGHT_RELEASE_DELTA = 45; // Light must return near ambient before another cover can count.
+const int LIGHT_COVER_DELTA = 10; // Make the light trigger very sensitive to a drop from ambient.
+const int LIGHT_RELEASE_DELTA = 5; // Require a small return toward ambient before rearming light detection.
 const unsigned long BUTTON_DEBOUNCE_MS = 35; // Ignore button contact bounce shorter than this interval.
 const unsigned long SOUND_COOLDOWN_MS = 1000; // Separate distinct yells and suppress ambient-noise repeats.
 const unsigned long SOUND_CALIBRATION_MS = 1000; // Learn the room level before accepting sound events.
