@@ -37,10 +37,12 @@ class LaunchError(Exception):
 
 
 def info(message):
+    """Print a progress message immediately (flush so it shows before slow commands)."""
     print(message, flush=True)
 
 
 def run(command, cwd=ROOT):
+    """Print and run a command, streaming its output; raise CalledProcessError on failure."""
     info(f"\n==> {' '.join(str(part) for part in command)}")
     subprocess.run([str(part) for part in command], cwd=cwd, check=True)
 
@@ -60,6 +62,7 @@ def capture(command):
 
 
 def ask_yes_no(question, default=True):
+    """Ask a yes/no question; return the default when there is no terminal to ask on."""
     if not sys.stdin.isatty():
         return default
     suffix = "[Y/n]" if default else "[y/N]"
@@ -95,6 +98,7 @@ def find_arduino_cli():
 
 
 def arduino_cli_install_hint():
+    """Return the command to install Arduino CLI on this OS."""
     if IS_WINDOWS:
         return "winget install ArduinoSA.CLI   (or install Arduino IDE 2)"
     if IS_MAC:
@@ -107,6 +111,7 @@ def arduino_cli_install_hint():
 
 
 def cmake_install_hint():
+    """Return the command(s) to install CMake and a C++ compiler on this OS."""
     if IS_WINDOWS:
         return (
             "winget install Kitware.CMake\n"
@@ -119,6 +124,7 @@ def cmake_install_hint():
 
 
 def require_cmake():
+    """Return the path to cmake, or raise LaunchError explaining how to install it."""
     cmake = shutil.which("cmake")
     if cmake is None and IS_WINDOWS:
         default = Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "CMake" / "bin" / "cmake.exe"
@@ -135,6 +141,7 @@ def require_cmake():
 
 
 def build_dir():
+    """Return the build folder: unique per checkout so a moved project never reuses a stale CMake cache."""
     root_tag = hashlib.sha256(str(ROOT).encode("utf-8")).hexdigest()[:10]
     default = ROOT / "build" / f"run-focusbird-{root_tag}"
     path = Path(os.environ.get("FOCUSBIRD_BUILD_DIR", default)).expanduser()
@@ -142,6 +149,7 @@ def build_dir():
 
 
 def build_game(cmake):
+    """Configure and build the game with CMake; return the path to the executable."""
     out = build_dir()
     configure = [cmake, "-S", ROOT, "-B", out, "-DCMAKE_BUILD_TYPE=Release"]
     if IS_WINDOWS and not (out / "CMakeCache.txt").exists() and not os.environ.get("CMAKE_GENERATOR"):
@@ -172,6 +180,7 @@ def build_game(cmake):
 
 
 def list_serial_ports(cli):
+    """Return serial ports reported by `arduino-cli board list` as dicts with port/fqbn/name/usb/label."""
     output = capture([cli, "board", "list", "--format", "json"])
     if output is None:
         return []
@@ -205,6 +214,10 @@ def list_serial_ports(cli):
 
 
 def choose_port(ports, requested):
+    """Pick the Grove board's port; return (port, fqbn, board name), or (None, '', '') if none.
+
+    Order of preference: an explicit --port, then the only recognised Arduino, then the
+    only USB serial device. If several remain, ask the user."""
     if requested:
         match = next((p for p in ports if p["port"].lower() == requested.lower()), {})
         return requested, match.get("fqbn", ""), match.get("name", "")
@@ -238,6 +251,7 @@ def choose_port(ports, requested):
 
 
 def serial_permission_problem(port):
+    """On Linux, return a how-to-fix message if the user can't open the port; else ''."""
     if not IS_LINUX or not Path(port).exists() or os.access(port, os.R_OK | os.W_OK):
         return ""
     distro_id = ""
@@ -256,6 +270,7 @@ def serial_permission_problem(port):
 
 
 def ensure_core(cli, fqbn):
+    """Install the Arduino board package (e.g. arduino:avr) the first time it is needed."""
     core = ":".join(fqbn.split(":")[:2])
     listing = capture([cli, "core", "list"]) or ""
     installed = {line.split()[0] for line in listing.splitlines() if line.split()}
@@ -266,6 +281,7 @@ def ensure_core(cli, fqbn):
 
 
 def upload_firmware(cli, port, fqbn):
+    """Compile and upload the sketch, turning a failed upload into a helpful error message."""
     ensure_core(cli, fqbn)
     run([cli, "compile", "--fqbn", fqbn, SKETCH])
     try:
@@ -293,6 +309,7 @@ def upload_firmware(cli, port, fqbn):
 
 
 def main():
+    """Parse options, build the game, prepare the board, and launch; return the game's exit code."""
     parser = argparse.ArgumentParser(
         description="Build FocusBird, upload the Grove firmware, and launch the game."
     )

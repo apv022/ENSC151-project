@@ -1,3 +1,12 @@
+/*
+ * SerialPort implementation for Windows (Win32 API) and macOS/Linux (POSIX termios).
+ *
+ * Each method has an #ifdef _WIN32 branch and an #else (POSIX) branch that do the
+ * same job with the platform's own API. Everything is non-blocking: reads return
+ * immediately with whatever bytes have arrived, so the game loop never waits on
+ * the Arduino.
+ */
+
 #include "serial_port.h"
 
 #include <algorithm>
@@ -6,13 +15,13 @@
 #include <cstdint>
 #include <utility>
 
-#ifdef _WIN32
-#include <windows.h>
-#else
-#include <fcntl.h>
-#include <termios.h>
-#include <unistd.h>
-#endif
+#ifdef _WIN32 // Windows
+#include <windows.h> // CreateFile, DCB, ReadFile, WriteFile
+#else // macOS and Linux
+#include <fcntl.h> // open() flags
+#include <termios.h> // Serial line settings
+#include <unistd.h> // read(), write(), close()
+#endif // _WIN32
 
 constexpr unsigned int BaudRate = 115200; // Must match Serial.begin() in the Arduino sketch.
 
@@ -42,7 +51,7 @@ SerialPort::~SerialPort() {
 bool SerialPort::Open(const std::string& portName) {
     Close(); // Reopening first releases any previous device and stale partial line.
 
-#ifdef _WIN32
+#ifdef _WIN32 // Windows
     std::string windowsPath = portName; // Keep the caller's port string intact.
     if (windowsPath.rfind("\\\\.\\", 0) != 0) {
         windowsPath = "\\\\.\\" + windowsPath; // Win32 requires this form for COM10+.
@@ -97,7 +106,7 @@ bool SerialPort::Open(const std::string& portName) {
     }
     PurgeComm(device, PURGE_RXCLEAR | PURGE_TXCLEAR); // Drop bytes buffered before the game opened the port.
     handle_ = reinterpret_cast<std::intptr_t>(device); // Retain the Win32 handle without truncation.
-#else
+#else // macOS and Linux (POSIX)
     const int descriptor = open(portName.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK);
     if (descriptor < 0) {
         return false; // Keep the wrapper closed if the device path is unavailable.
@@ -109,6 +118,7 @@ bool SerialPort::Open(const std::string& portName) {
         return false;
     }
     cfmakeraw(&settings); // Disable line processing so bytes arrive exactly as sent.
+    // POSIX names speeds with constants (B115200) rather than numbers; this keeps them in sync.
     static_assert(BaudRate == 115200, "update B115200 below to match BaudRate");
     cfsetispeed(&settings, B115200); // Set the incoming data rate.
     cfsetospeed(&settings, B115200); // Set the outgoing data rate.
@@ -124,7 +134,7 @@ bool SerialPort::Open(const std::string& portName) {
         return false;
     }
     handle_ = static_cast<std::intptr_t>(descriptor); // Store the configured non-blocking descriptor.
-#endif
+#endif // _WIN32
 
     incomingBuffer_.clear(); // A newly opened port must not inherit old partial data.
     return true;
@@ -139,11 +149,11 @@ void SerialPort::Close() {
     if (handle_ < 0) {
         return; // Nothing is open, so there is no operating-system resource to release.
     }
-#ifdef _WIN32
+#ifdef _WIN32 // Windows
     CloseHandle(reinterpret_cast<HANDLE>(handle_));
-#else
+#else // macOS and Linux (POSIX)
     close(handle_); // POSIX closes its file descriptor directly.
-#endif
+#endif // _WIN32
     handle_ = -1; // Mark the wrapper closed after releasing the underlying resource.
     incomingBuffer_.clear(); // Discard bytes that cannot form a complete message.
 }
@@ -169,7 +179,7 @@ std::vector<std::string> SerialPort::ReadLines() {
     }
 
     std::array<char, 256> bytes{}; // Limit each poll to a small, frame-friendly chunk.
-#ifdef _WIN32
+#ifdef _WIN32 // Windows
     DWORD bytesRead = 0; // Win32 fills this with the number of bytes received.
     const HANDLE device = reinterpret_cast<HANDLE>(handle_);
     if (!ReadFile(device, bytes.data(), static_cast<DWORD>(bytes.size()), &bytesRead, nullptr)) {
@@ -184,7 +194,7 @@ std::vector<std::string> SerialPort::ReadLines() {
     if (bytesRead > 0) {
         incomingBuffer_.append(bytes.data(), bytesRead); // Preserve bytes until newline parsing.
     }
-#else
+#else // macOS and Linux (POSIX)
     const ssize_t bytesRead = read(handle_, bytes.data(), bytes.size());
     if (bytesRead > 0) {
         incomingBuffer_.append(bytes.data(), static_cast<std::size_t>(bytesRead));
@@ -192,7 +202,7 @@ std::vector<std::string> SerialPort::ReadLines() {
         Close(); // A real I/O error disconnects the port rather than blocking the game.
         return lines;
     }
-#endif
+#endif // _WIN32
 
     std::size_t newline = incomingBuffer_.find('\n'); // Locate the first complete message.
     while (newline != std::string::npos) {
@@ -227,7 +237,7 @@ bool SerialPort::WriteLine(const std::string& line) {
         message.push_back('\n'); // Every protocol message ends with one line feed.
     }
 
-#ifdef _WIN32
+#ifdef _WIN32 // Windows
     DWORD bytesWritten = 0; // Win32 reports the actual number of bytes sent.
     const HANDLE device = reinterpret_cast<HANDLE>(handle_);
     if (!WriteFile(device, message.data(), static_cast<DWORD>(message.size()),
@@ -237,7 +247,7 @@ bool SerialPort::WriteLine(const std::string& line) {
         return false;
     }
     return true;
-#else
+#else // macOS and Linux (POSIX)
     std::size_t offset = 0; // Track progress in case the OS accepts a partial write.
     while (offset < message.size()) { // Continue until the full short command is transmitted.
         const ssize_t bytesWritten = write(handle_, message.data() + offset,
@@ -254,5 +264,5 @@ bool SerialPort::WriteLine(const std::string& line) {
         }
     }
     return true; // The complete command, including its newline, reached the OS driver.
-#endif
+#endif // _WIN32
 }
