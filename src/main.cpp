@@ -49,13 +49,12 @@ enum class BirdColor {
 };
 
 enum class Action {
-    Button, // Grove button press, or Space/Up on the keyboard.
+    Button, // Grove button press, or Space/Up on the keyboard; flap control only.
     Sound, // Sound sensor event, or Y on the keyboard.
     Light // Covered-light-sensor event, or C on the keyboard.
 };
 
 enum class PromptType {
-    Button, // Prompt the player to press the Grove button.
     Yell, // Prompt the player to make a sound for the sound sensor.
     Cover // Prompt the player to cover the Grove light sensor.
 };
@@ -188,7 +187,6 @@ void CycleBirdColor(Game& game) {
  */
 const char* PromptActionText(PromptType prompt) {
     switch (prompt) {
-        case PromptType::Button: return "PRESS THE BUTTON!";
         case PromptType::Yell: return "YELL!";
         case PromptType::Cover: return "COVER THE LIGHT!";
     }
@@ -290,11 +288,11 @@ Obstacle* FindActivePrompt(Game& game) {
 }
 
 /**
- * @brief Apply a button/sound/light action to the bird and active prompt.
+ * @brief Apply a flap or sensor action to the bird and active prompt.
  * @param game Current game state to update.
  * @param action Input event from keyboard or Arduino.
  * @param serial Optional open serial port used to play a buzzer feedback tone.
- * @return No value; the action can flap, answer a prompt, or be ignored.
+ * @return No value; button actions only flap, while sensors answer prompts.
  */
 void HandleAction(Game& game, Action action, SerialPort* serial) {
     if (game.screen != ScreenState::Playing) {
@@ -302,19 +300,15 @@ void HandleAction(Game& game, Action action, SerialPort* serial) {
     }
 
     if (action == Action::Button) {
-        game.birdVelocity = FlapVelocity; // Button always flaps, even when no button prompt is active.
+        game.birdVelocity = FlapVelocity; // The button is flight control, never a prompt answer.
+        return;
     }
 
     Obstacle* active = FindActivePrompt(game); // Resolve at most the currently visible prompt.
     if (active == nullptr) {
         return; // An early/late sensor event cannot accidentally count for a future prompt.
     }
-    if (action == Action::Button && active->prompt != PromptType::Button) {
-        return; // Preserve button-as-flight control without penalizing a flap during another prompt.
-    }
-
-    const bool matches = (active->prompt == PromptType::Button && action == Action::Button)
-        || (active->prompt == PromptType::Yell && action == Action::Sound)
+    const bool matches = (active->prompt == PromptType::Yell && action == Action::Sound)
         || (active->prompt == PromptType::Cover && action == Action::Light);
     if (matches) {
         active->result = PromptResult::Correct; // Mark the gate answered to ignore repeat sensor events.
@@ -349,8 +343,8 @@ void SpawnObstacle(Game& game) {
     const float minimumCenter = game.difficulty.gapHalfHeight + 58.0f; // Keep the opening clear of the ceiling.
     const float maximumCenter = ScreenHeight - GroundHeight - game.difficulty.gapHalfHeight - 58.0f; // Keep it above ground.
     std::uniform_real_distribution<float> gapDistribution(minimumCenter, maximumCenter); // Sample a safe opening height.
-    std::uniform_int_distribution<int> promptDistribution(0, 2); // Give each prompt type equal initial probability.
-    const int selectedPrompt = promptDistribution(game.random); // Randomly choose button, yell, or cover.
+    std::uniform_int_distribution<int> promptDistribution(0, 1); // Choose between yell and cover-light prompts.
+    const int selectedPrompt = promptDistribution(game.random);
     const PromptType prompt = static_cast<PromptType>(selectedPrompt); // Enum order matches the random values.
     game.obstacles.push_back({
         static_cast<float>(ScreenWidth + 24), // Start just outside the right edge of the window.
@@ -480,9 +474,7 @@ void DrawObstacle(const Obstacle& obstacle, const DifficultySettings& difficulty
     DrawRectangleLinesEx(bottomColumn, 3.0f, DARKGREEN); // Outline bottom column for crisp cartoon styling.
 
     if (obstacle.result == PromptResult::Waiting) {
-        const char* icon = obstacle.prompt == PromptType::Button ? "B" // Button prompt icon.
-            : obstacle.prompt == PromptType::Yell ? "!" // Sound prompt icon.
-            : "C"; // Cover prompt icon.
+        const char* icon = obstacle.prompt == PromptType::Yell ? "!" : "C";
         DrawCircle(static_cast<int>(obstacle.x + ObstacleWidth / 2.0f),
                    static_cast<int>(obstacle.gapCenter), 19.0f, GOLD); // Place cue badge in the safe gap.
         DrawText(icon, static_cast<int>(obstacle.x + ObstacleWidth / 2.0f - 7.0f),
@@ -647,7 +639,7 @@ void DrawTitle(const Game& game, bool serialConnected, bool serialRequested) {
              BirdBodyColor(game.birdColor));
     DrawCircle(670, 425, 10.0f, BirdBodyColor(game.birdColor)); // Preview the selected bird color.
     DrawCircleLines(670, 425, 10.0f, RAYWHITE);
-    DrawText("SPACE / UP = flap (button)", 270, 449, 18, RAYWHITE); // Keyboard button fallback.
+    DrawText("SPACE / UP = flap only", 270, 449, 18, RAYWHITE); // Keyboard flight control.
     DrawText("Y = yell input       C = cover input", 270, 476, 18, RAYWHITE); // Keyboard sensor fallbacks.
     DrawText("Grove button starts; sensor events answer matching prompts.",
              195, 505, 16, LIGHTGRAY); // Explain the hardware controls before play begins.
@@ -835,7 +827,7 @@ int main(int argc, char** argv) {
             }
         } else {
             if (IsKeyPressed(KEY_SPACE) || IsKeyPressed(KEY_UP)) {
-                HandleAction(game, Action::Button, serialConnected ? &serial : nullptr); // Keyboard flap/button prompt.
+                HandleAction(game, Action::Button, serialConnected ? &serial : nullptr); // Keyboard flap only.
             }
             if (IsKeyPressed(KEY_Y)) {
                 HandleAction(game, Action::Sound, serialConnected ? &serial : nullptr); // Simulate sound sensor event.

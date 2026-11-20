@@ -2,8 +2,8 @@
 
 FocusBird is a small, child-friendly Flappy Bird-inspired reaction game. It is a
 desktop **C++17 + Raylib** application with optional **Arduino/Grove** controls.
-The player guides a bird through gates while answering prompts with a button,
-sound, or covered light sensor. The game records gates passed, correct answers,
+The player guides a bird through gates while answering sound and covered-light
+prompts. The game records gates passed, correct answers,
 wrong responses, missed prompts, and play time.
 
 The game has no external art or sound-asset dependency: its graphics are drawn
@@ -13,7 +13,7 @@ Arduino is not connected, which is useful for development and demonstrations.
 ## Features
 
 - Side-scrolling game with bird physics, obstacle gaps, and collision detection.
-- Three prompt types: **PRESS THE BUTTON**, **YELL**, and **COVER THE LIGHT**.
+- Two prompt types: **YELL** and **COVER THE LIGHT**.
 - Correct prompt answers mark that gate green and play a positive buzzer tone.
 - Wrong answers, missed prompts, ground/ceiling contact, and contact with any
   gate (including a green one) use a three-life allowance.
@@ -26,8 +26,8 @@ Arduino is not connected, which is useful for development and demonstrations.
   well as average and fastest correct reaction time.
 - Non-blocking serial communications: loss of the Arduino connection does not
   stop the game; the selected port reconnects automatically.
-- Keyboard fallback for all three inputs.
-- Grove button can start/restart a run, flap during play, and answer button prompts.
+- Keyboard fallback for flight (`Space`/`Up`), sound (`Y`), and light (`C`).
+- Grove button starts/restarts a run and flaps during play; it never answers a prompt.
 
 ## Project layout
 
@@ -131,17 +131,17 @@ discoverable before configuring.
 | `2` | Select Challenge on title screen | — |
 | `T` | Cycle background theme on title screen | — |
 | `B` | Cycle bird color on title screen | — |
-| Grove button | Start/restart; flap during play | Button prompt |
-| `Space` or `Up` | Flap | Button prompt |
+| Grove button | Start/restart; flap during play | — |
+| `Space` or `Up` | Flap only | — |
 | `Y` | Simulate a sound sensor event | Yell prompt |
 | `C` | Simulate covering the light sensor | Cover prompt |
 | `Esc` | Quit | — |
 
 An input only answers the **currently active** matching prompt. An early event,
 late event, or unrelated sensor event is not counted as the requested response.
-The button still flaps whenever it is pressed, including when no button prompt is
-active. Since it is also flight control, pressing it during a YELL or COVER
-prompt does not count as an incorrect answer.
+The Grove button and `Space`/`Up` are flight controls only. They do not answer or
+fail a YELL or COVER prompt; only the sound and light sensors (or `Y`/`C` keyboard
+fallbacks) affect those prompts.
 
 ## Arduino hardware setup
 
@@ -150,7 +150,7 @@ Connect the Grove components to the pins configured at the top of
 
 | Component | Default pin | Role |
 | --- | --- | --- |
-| Grove button | D2 | Flap and button-prompt response; module pull-down, pressed is HIGH |
+| Grove button | D2 | Start/restart and flap control; module pull-down, pressed is HIGH |
 | Grove buzzer | D3 | Prompt cue and correct/incorrect response feedback |
 | Grove sound sensor | A0 | A sound above the learned room baseline emits `SOUND` |
 | Grove light sensor | A1 | Covering lowers the raw reading from its ambient baseline and emits `LIGHT` |
@@ -294,7 +294,7 @@ Each message is a newline-terminated ASCII line:
 
 | Direction | Message | Meaning |
 | --- | --- | --- |
-| Arduino → game | `BTN` | Debounced button press; also flaps the bird |
+| Arduino → game | `BTN` | Debounced button press; starts/restarts on menus and flaps during play |
 | Arduino → game | `SOUND` | Confirmed sound burst crossed the configured threshold |
 | Arduino → game | `LIGHT` | Light sensor transitioned to covered |
 | Arduino → game | `SENSORS ...` | Raw sensor/baseline diagnostics, printed twice per second |
@@ -341,8 +341,8 @@ frame time, with a safety clamp after long frame stalls.
 
 1. Build and launch without `--serial`; verify the HUD says **KEYBOARD MODE**.
 2. Start in both difficulties and check the bird flaps with Space/Up.
-3. Answer each prompt with the matching key (`Space`, `Y`, or `C`); verify the
-   correct count increases and the gate changes to its safe color.
+3. Answer prompts with `Y` or `C`; verify the correct count increases and the
+   gate changes to its safe color. `Space`/`Up` should only flap.
 4. Use an incorrect key during a prompt; verify incorrect count and lives change.
 5. Do not answer a prompt; verify the miss count increases after the gate passes.
 6. Hit both green and unanswered gate columns, plus the screen boundaries;
@@ -355,8 +355,8 @@ frame time, with a safety clamp after long frame stalls.
 1. Upload the firmware and confirm the board appears as a serial device.
 2. Launch the game with the device path and check **GROVE KIT CONNECTED** (or
    **SEARCHING FOR GROVE KIT** while the port is unavailable).
-3. Press the Grove button on the title screen to start. During play it flaps the
-   bird and, during a button prompt, also records a correct answer.
+3. Press the Grove button on the title screen to start. During play it only
+   flaps; verify button presses do not answer or penalize either sensor prompt.
 4. Use Serial Monitor to confirm that covering A1 lowers `lightRaw` by at least
    `LIGHT_COVER_DELTA`; check that a deliberate yell raises `soundDelta` above
    `SOUND_DELTA_THRESHOLD`. Close the monitor, then test both prompts in-game.
