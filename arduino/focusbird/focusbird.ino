@@ -18,7 +18,7 @@ const uint8_t SOUND_SENSOR_PIN = A0; // Grove sound sensor (analog).
 const uint8_t LIGHT_SENSOR_PIN = A1; // Grove light sensor (analog).
 
 const int ANALOG_MAX_VALUE = 1023; // 10-bit ADC on Uno-compatible boards; change for other ADC ranges.
-const int SOUND_RAW_THRESHOLD = 800; // SOUND fires when the raw reading stays above this.
+const int SOUND_RAW_THRESHOLD = 700; // SOUND fires when the raw reading stays above this.
 const int LIGHT_RAW_THRESHOLD = ANALOG_MAX_VALUE / 10; // LIGHT fires at or below 10% of full scale (covered).
 const int LIGHT_RAW_RELEASE_THRESHOLD = ANALOG_MAX_VALUE * 12 / 100; // Rearm above 12% (hysteresis gap stops chatter).
 const unsigned int CONFIRM_SAMPLES = 3; // Consecutive samples required, so one ADC spike is ignored.
