@@ -84,7 +84,7 @@ Monitor and any open FocusBird window first:** only one program can use the port
 
 ## Rules
 
-- Three lives. A gate's prompt opens when it gets close and closes when it passes the bird.
+- Three lives. A gate's prompt opens when it gets close (its **!** or **C** badge appears) and closes when it passes the bird.
 - Correct answer: gate turns green, success beep, reaction time recorded.
 - Wrong answer or missed prompt: one life. Sensor events outside a prompt window are ignored.
 - Touching any gate (even a green one), the ground, or the ceiling: one life.
@@ -96,13 +96,14 @@ Monitor and any open FocusBird window first:** only one program can use the port
 | --- | --- | --- |
 | Button | D2 | Sends `BTN` on press (module has its own pull-down; pressed = HIGH) |
 | Buzzer | D3 | Prompt cue, success and error tones |
-| Sound sensor | A0 | Sends `SOUND` when raw reading stays above 700 |
+| Sound sensor | A0 | Sends `SOUND` when the loudest reading in two 20 ms windows in a row is above 700 |
 | Light sensor (analog) | A1 | Sends `LIGHT` when raw reading drops to 10% of full scale (≤102) |
 
 Pins and thresholds are constants at the top of `arduino/focusbird/focusbird.ino`.
 
-**Tuning:** the board prints `SENSORS <sound> <light> <soundCutoff> <lightCutoff>`
-twice a second. Close the game and open Arduino Serial Monitor (or
+**Tuning:** the board prints `SENSORS <soundPeak> <light> <soundCutoff> <lightCutoff>`
+twice a second, where `soundPeak` is the loudest sound reading of the last half second.
+That's the same value the yell detector uses. Close the game and open Arduino Serial Monitor (or
 `arduino-cli monitor -p PORT --config 115200`), then yell and cover the sensor to
 see the values. Adjust `SOUND_RAW_THRESHOLD` / `LIGHT_RAW_THRESHOLD` if your room
 or sensor needs it, and `ANALOG_MAX_VALUE` for boards whose ADC isn't 10-bit.

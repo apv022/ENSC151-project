@@ -414,7 +414,7 @@ void DrawCentered(const char* text, int y, int fontSize, Color color) {
 }
 
 /**
- * @brief Draw one gate; answered gates turn green, unanswered ones show a prompt badge.
+ * @brief Draw one gate; answered gates turn green, and a gate whose prompt is open shows a badge.
  * @param obstacle Gate to draw.
  * @param gapHalfHeight Half the opening height for the current difficulty.
  */
@@ -428,7 +428,9 @@ void DrawObstacle(const Obstacle& obstacle, float gapHalfHeight) {
     DrawRectangleLinesEx(top, 3.0f, DARKGREEN); // Outlines give a cartoon look.
     DrawRectangleLinesEx(bottom, 3.0f, DARKGREEN);
 
-    if (obstacle.result == PromptResult::Waiting) { // Badge in the gap: "!" = yell, "C" = cover.
+    // Badge in the gap ("!" = yell, "C" = cover), shown only while the prompt can
+    // be answered, so players never yell or cover before it counts.
+    if (IsPromptActive(obstacle)) {
         const int centerX = static_cast<int>(obstacle.x + ObstacleWidth / 2.0f);
         DrawCircle(centerX, static_cast<int>(obstacle.gapCenter), 19.0f, GOLD);
         DrawText(obstacle.prompt == PromptType::Yell ? "!" : "C", centerX - 7,

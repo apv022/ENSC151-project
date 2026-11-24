@@ -39,5 +39,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: arduino/setup-arduino-cli@v2
-      - run: arduino-cli core update-index && arduino-cli core install arduino:avr
-      - run: arduino-cli compile --fqbn arduino:avr:uno --warnings all arduino/focusbird
+      - run: arduino-cli core update-index && arduino-cli core install arduino:avr arduino:renesas_uno
+      - name: Compile for Arduino Uno
+        run: arduino-cli compile --fqbn arduino:avr:uno --warnings all arduino/focusbird
+      - name: Compile for Arduino UNO R4 WiFi
+        run: arduino-cli compile --fqbn arduino:renesas_uno:unor4wifi --warnings all arduino/focusbird
