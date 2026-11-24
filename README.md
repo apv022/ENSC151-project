@@ -96,7 +96,7 @@ Monitor and any open FocusBird window first:** only one program can use the port
 | --- | --- | --- |
 | Button | D2 | Sends `BTN` on press (module has its own pull-down; pressed = HIGH) |
 | Buzzer | D3 | Prompt cue, success and error tones |
-| Sound sensor | A0 | Sends `SOUND` when raw reading stays above 800 |
+| Sound sensor | A0 | Sends `SOUND` when raw reading stays above 700 |
 | Light sensor (analog) | A1 | Sends `LIGHT` when raw reading drops to 10% of full scale (≤102) |
 
 Pins and thresholds are constants at the top of `arduino/focusbird/focusbird.ino`.

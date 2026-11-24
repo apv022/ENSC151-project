@@ -1,268 +1,262 @@
 /*
- * SerialPort implementation for Windows (Win32 API) and macOS/Linux (POSIX termios).
- *
- * Each method has an #ifdef _WIN32 branch and an #else (POSIX) branch that do the
- * same job with the platform's own API. Everything is non-blocking: reads return
- * immediately with whatever bytes have arrived, so the game loop never waits on
- * the Arduino.
+ * SerialPort for Windows, macOS, and Linux, in two layers:
+ *   1. Platform layer (OsOpen/OsRead/OsWrite/OsClose): the only OS-specific code,
+ *      one Windows and one POSIX version of each.
+ *   2. SerialPort methods, written once: turn bytes into text lines and back.
+ * Reads never block, so the game never waits on the Arduino. A real I/O error
+ * closes the port and the game retries every two seconds.
+ * Settings: 115200 baud, 8-N-1, no flow control (matches the Arduino sketch).
  */
 
 #include "serial_port.h"
 
-#include <algorithm>
 #include <array>
-#include <cerrno>
-#include <cstdint>
-#include <utility>
 
 #ifdef _WIN32 // Windows
 #include <windows.h> // CreateFile, DCB, ReadFile, WriteFile
 #else // macOS and Linux
+#include <cerrno> // errno, EAGAIN
 #include <fcntl.h> // open() flags
 #include <termios.h> // Serial line settings
 #include <unistd.h> // read(), write(), close()
-#endif // _WIN32
+#endif
 
-constexpr unsigned int BaudRate = 115200; // Must match Serial.begin() in the Arduino sketch.
+namespace {
 
-/**
- * @brief Construct a serial wrapper with no device open.
- * @param none No arguments are required.
- * @return A closed wrapper.
- */
-SerialPort::SerialPort()
-    : handle_(-1), incomingBuffer_() { // Start closed and with no pending bytes.
-}
+constexpr std::intptr_t ClosedHandle = -1; // Value of handle_ when no port is open.
+
+// ------------------------------- Platform layer ---------------------------------
+
+#ifdef _WIN32
 
 /**
- * @brief Ensure the operating-system serial handle is released.
- * @param none The object owns the handle being closed.
- * @return No value.
+ * @brief Open and configure a Windows COM port.
+ * @param portName Port such as "COM3".
+ * @return The port handle, or ClosedHandle on failure.
  */
-SerialPort::~SerialPort() {
-    Close(); // RAII prevents a successful open from leaking on normal exit.
-}
-
-/**
- * @brief Open and configure a serial device for non-blocking newline messages.
- * @param portName Device path or COM port supplied by the command line.
- * @return true after successful setup; false if opening/configuration fails.
- */
-bool SerialPort::Open(const std::string& portName) {
-    Close(); // Reopening first releases any previous device and stale partial line.
-
-#ifdef _WIN32 // Windows
-    std::string windowsPath = portName; // Keep the caller's port string intact.
-    if (windowsPath.rfind("\\\\.\\", 0) != 0) {
-        windowsPath = "\\\\.\\" + windowsPath; // Win32 requires this form for COM10+.
-    }
-
-    HANDLE device = CreateFileA(windowsPath.c_str(), GENERIC_READ | GENERIC_WRITE,
-                                0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL,
-                                nullptr); // Open without sharing to avoid port contention.
+std::intptr_t OsOpen(const std::string& portName) {
+    // The "\\.\" prefix is required for COM10 and above and harmless for COM1-9.
+    const std::string path = portName.rfind("\\\\.\\", 0) == 0 ? portName : "\\\\.\\" + portName;
+    HANDLE device = CreateFileA(path.c_str(), GENERIC_READ | GENERIC_WRITE,
+                                0, nullptr, OPEN_EXISTING, 0, nullptr); // 0 = no sharing.
     if (device == INVALID_HANDLE_VALUE) {
-        return false; // Leave the wrapper closed if Windows could not open the port.
+        return ClosedHandle;
     }
 
-    DCB settings{}; // Zero-initialize the Windows serial configuration structure.
-    settings.DCBlength = sizeof(settings); // Tell Win32 the structure size before use.
-    if (!GetCommState(device, &settings)) {
-        CloseHandle(device); // Release the port if configuration cannot be inspected.
-        return false;
-    }
-    settings.BaudRate = BaudRate; // Match the Arduino serial speed.
-    settings.ByteSize = 8; // Use eight data bits for each transmitted byte.
-    settings.Parity = NOPARITY; // Disable parity for the agreed 8-N-1 protocol.
-    settings.StopBits = ONESTOPBIT; // Use one stop bit after each byte.
-    settings.fBinary = TRUE; // Windows only supports binary mode; required by the driver.
-    settings.fParity = FALSE; // Do not check parity on received bytes.
-    // GetCommState returns whatever a previous program (Arduino IDE, a terminal,
-    // a CH340/FTDI driver default) left behind. Explicitly turn off every kind of
-    // flow control, otherwise reads or writes can stall forever on Grove boards.
-    settings.fOutxCtsFlow = FALSE;
-    settings.fOutxDsrFlow = FALSE;
-    settings.fDsrSensitivity = FALSE;
-    settings.fOutX = FALSE;
-    settings.fInX = FALSE;
-    settings.fNull = FALSE;
-    settings.fErrorChar = FALSE;
-    // With fAbortOnError set, the first framing/overrun error makes every later
-    // ReadFile fail until ClearCommError is called, which looked like a disconnect.
-    settings.fAbortOnError = FALSE;
-    settings.fDtrControl = DTR_CONTROL_ENABLE; // Assert DTR: resets Uno-style boards, required by native-USB boards.
-    settings.fRtsControl = RTS_CONTROL_ENABLE; // Keep RTS asserted; some USB-serial chips need it to pass data.
-    if (!SetCommState(device, &settings)) {
-        CloseHandle(device); // Do not retain a half-configured connection.
-        return false;
-    }
+    // Settings built from scratch, not inherited from another program, in Windows
+    // "mode" syntax: 115200 8-N-1, all flow control off, DTR and RTS on (some USB
+    // chips only send data then). The zeroed DCB keeps fAbortOnError off, so one
+    // bad byte while the board resets can't break every later read.
+    DCB settings{};
+    settings.DCBlength = sizeof(settings);
+    const bool built = BuildCommDCBA(
+        "baud=115200 parity=N data=8 stop=1 xon=off octs=off odsr=off idsr=off dtr=on rts=on",
+        &settings);
+    settings.fBinary = TRUE; // Windows only supports binary mode.
 
-    COMMTIMEOUTS timeouts{}; // Start with zero timeouts for non-blocking reads.
-    timeouts.ReadIntervalTimeout = MAXDWORD; // Return immediately when no bytes are waiting.
-    timeouts.ReadTotalTimeoutConstant = 0; // Do not wait a fixed amount per read.
-    timeouts.ReadTotalTimeoutMultiplier = 0; // Do not scale read wait by byte count.
-    if (!SetCommTimeouts(device, &timeouts)) {
-        CloseHandle(device); // Release the device if non-blocking mode cannot be set.
-        return false;
+    COMMTIMEOUTS timeouts{}; // MAXDWORD interval + zero totals = reads return immediately.
+    timeouts.ReadIntervalTimeout = MAXDWORD;
+
+    if (!built || !SetCommState(device, &settings) || !SetCommTimeouts(device, &timeouts)) {
+        CloseHandle(device); // Don't keep a half-configured port.
+        return ClosedHandle;
     }
-    PurgeComm(device, PURGE_RXCLEAR | PURGE_TXCLEAR); // Drop bytes buffered before the game opened the port.
-    handle_ = reinterpret_cast<std::intptr_t>(device); // Retain the Win32 handle without truncation.
-#else // macOS and Linux (POSIX)
+    return reinterpret_cast<std::intptr_t>(device);
+}
+
+/**
+ * @brief Read whatever bytes are waiting, without blocking.
+ * @return Number of bytes read (0 = nothing waiting), or -1 on a real error such as unplugging.
+ */
+long OsRead(std::intptr_t handle, char* buffer, unsigned long size) {
+    DWORD bytesRead = 0;
+    if (!ReadFile(reinterpret_cast<HANDLE>(handle), buffer, size, &bytesRead, nullptr)) {
+        return -1;
+    }
+    return static_cast<long>(bytesRead);
+}
+
+/**
+ * @brief Send bytes to the port.
+ * @return true only if every byte was written.
+ */
+bool OsWrite(std::intptr_t handle, const char* data, unsigned long size) {
+    DWORD bytesWritten = 0;
+    return WriteFile(reinterpret_cast<HANDLE>(handle), data, size, &bytesWritten, nullptr)
+        && bytesWritten == size;
+}
+
+/** @brief Release the port handle. */
+void OsClose(std::intptr_t handle) {
+    CloseHandle(reinterpret_cast<HANDLE>(handle));
+}
+
+#else // macOS and Linux
+
+/**
+ * @brief Open and configure a serial device such as /dev/ttyACM0 or /dev/cu.usbmodem1101.
+ * @param portName Device path.
+ * @return The file descriptor, or ClosedHandle on failure.
+ */
+std::intptr_t OsOpen(const std::string& portName) {
+    // Read/write, don't become this terminal's controlling process, never block.
     const int descriptor = open(portName.c_str(), O_RDWR | O_NOCTTY | O_NONBLOCK);
     if (descriptor < 0) {
-        return false; // Keep the wrapper closed if the device path is unavailable.
+        return ClosedHandle; // Wrong path, unplugged, or no permission.
     }
 
-    termios settings{}; // Zero-initialize termios before loading device settings.
+    termios settings{};
     if (tcgetattr(descriptor, &settings) != 0) {
-        close(descriptor); // Release the descriptor when serial configuration fails.
-        return false;
+        close(descriptor);
+        return ClosedHandle;
     }
-    cfmakeraw(&settings); // Disable line processing so bytes arrive exactly as sent.
-    // POSIX names speeds with constants (B115200) rather than numbers; this keeps them in sync.
-    static_assert(BaudRate == 115200, "update B115200 below to match BaudRate");
-    cfsetispeed(&settings, B115200); // Set the incoming data rate.
-    cfsetospeed(&settings, B115200); // Set the outgoing data rate.
-    settings.c_cflag |= (CLOCAL | CREAD); // Ignore modem-control lines and enable reception.
-    settings.c_cflag &= ~CSTOPB; // Select one stop bit.
-    settings.c_cflag &= ~PARENB; // Disable parity bits.
-    settings.c_cflag &= ~CSIZE; // Clear the old character-size selection.
-    settings.c_cflag |= CS8; // Select eight data bits.
-    settings.c_cc[VMIN] = 0; // Permit a read to return immediately with no bytes.
-    settings.c_cc[VTIME] = 0; // Disable the inter-byte read timeout.
+    cfmakeraw(&settings); // Raw bytes: no line editing or echo; 8 data bits, no parity.
+    settings.c_cflag &= ~CSTOPB; // One stop bit.
+    settings.c_cflag |= CLOCAL | CREAD; // Ignore modem-control lines; enable receiving.
+    cfsetispeed(&settings, B115200); // Must match Serial.begin(115200) in the sketch.
+    cfsetospeed(&settings, B115200);
     if (tcsetattr(descriptor, TCSANOW, &settings) != 0) {
-        close(descriptor); // Do not retain a device that failed configuration.
-        return false;
+        close(descriptor);
+        return ClosedHandle;
     }
-    handle_ = static_cast<std::intptr_t>(descriptor); // Store the configured non-blocking descriptor.
-#endif // _WIN32
-
-    incomingBuffer_.clear(); // A newly opened port must not inherit old partial data.
-    return true;
+    return descriptor;
 }
 
 /**
- * @brief Release the serial device and forget an incomplete incoming line.
- * @param none The current OS handle and receive buffer are used.
- * @return No value; safe when called more than once.
+ * @brief Read whatever bytes are waiting, without blocking.
+ * @return Number of bytes read (0 = nothing waiting), or -1 on a real error such as unplugging.
+ */
+long OsRead(std::intptr_t handle, char* buffer, unsigned long size) {
+    const long bytesRead = static_cast<long>(read(static_cast<int>(handle), buffer, size));
+    if (bytesRead < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) {
+        return 0; // Not an error: there is simply nothing to read right now.
+    }
+    if (bytesRead == 0) {
+        return -1; // On a non-blocking port "no data" is EAGAIN above; 0 means the device hung up (unplugged).
+    }
+    return bytesRead;
+}
+
+/**
+ * @brief Send bytes to the port.
+ * @return true only if every byte was written. Messages are ~15 bytes, so one call is enough.
+ */
+bool OsWrite(std::intptr_t handle, const char* data, unsigned long size) {
+    return write(static_cast<int>(handle), data, size) == static_cast<long>(size);
+}
+
+/** @brief Release the file descriptor. */
+void OsClose(std::intptr_t handle) {
+    close(static_cast<int>(handle));
+}
+
+#endif // _WIN32
+
+} // namespace
+
+// ------------------------------- SerialPort -------------------------------------
+// Everything below is the same on every operating system.
+
+/**
+ * @brief Construct a wrapper with no port open.
+ */
+SerialPort::SerialPort()
+    : handle_(ClosedHandle), incomingBuffer_() {
+}
+
+/**
+ * @brief Close the port automatically when the object goes away (RAII).
+ */
+SerialPort::~SerialPort() {
+    Close();
+}
+
+/**
+ * @brief Open and configure a port, closing any previously open one first.
+ * @param portName "COM3" on Windows, "/dev/ttyACM0" or "/dev/cu.usbmodem…" elsewhere.
+ * @return true if the port is now open.
+ */
+bool SerialPort::Open(const std::string& portName) {
+    Close();
+    handle_ = OsOpen(portName);
+    return IsOpen();
+}
+
+/**
+ * @brief Release the port and forget any half-received line. Safe to call twice.
  */
 void SerialPort::Close() {
-    if (handle_ < 0) {
-        return; // Nothing is open, so there is no operating-system resource to release.
+    if (IsOpen()) {
+        OsClose(handle_);
     }
-#ifdef _WIN32 // Windows
-    CloseHandle(reinterpret_cast<HANDLE>(handle_));
-#else // macOS and Linux (POSIX)
-    close(handle_); // POSIX closes its file descriptor directly.
-#endif // _WIN32
-    handle_ = -1; // Mark the wrapper closed after releasing the underlying resource.
-    incomingBuffer_.clear(); // Discard bytes that cannot form a complete message.
+    handle_ = ClosedHandle;
+    incomingBuffer_.clear();
 }
 
 /**
- * @brief Check whether this wrapper currently owns an open serial device.
- * @param none The stored handle is inspected.
- * @return true when Open() succeeded and Close() has not been called.
+ * @brief Report whether a port is open.
+ * @return true after a successful Open() until Close() or an I/O error.
  */
 bool SerialPort::IsOpen() const {
-    return handle_ >= 0; // Negative is the sentinel used for a closed device.
+    return handle_ != ClosedHandle;
 }
 
 /**
- * @brief Read waiting bytes and split complete newline-terminated messages.
- * @param none The open device and its retained partial-line buffer are inputs.
- * @return All complete lines available now; partial line content remains buffered.
+ * @brief Return every complete line received so far, without blocking.
+ * USB can split a message across packets, so a partial line stays in
+ * incomingBuffer_ until its newline arrives on a later call.
+ * @return Complete lines with "\n" / "\r\n" removed; empty lines are skipped.
  */
 std::vector<std::string> SerialPort::ReadLines() {
-    std::vector<std::string> lines; // Collect complete messages for the caller.
+    std::vector<std::string> lines;
     if (!IsOpen()) {
-        return lines; // A disconnected Arduino produces no input events.
+        return lines; // Keyboard mode or disconnected: no input.
     }
 
-    std::array<char, 256> bytes{}; // Limit each poll to a small, frame-friendly chunk.
-#ifdef _WIN32 // Windows
-    DWORD bytesRead = 0; // Win32 fills this with the number of bytes received.
-    const HANDLE device = reinterpret_cast<HANDLE>(handle_);
-    if (!ReadFile(device, bytes.data(), static_cast<DWORD>(bytes.size()), &bytesRead, nullptr)) {
-        DWORD errors = 0;
-        // A line error (e.g. noise while the board resets) is recoverable; only a
-        // failure to even query the port means the device was actually unplugged.
-        if (!ClearCommError(device, &errors, nullptr)) {
-            Close(); // Treat a device-level read error as a disconnect so the app can reconnect.
-        }
+    std::array<char, 256> bytes{};
+    const long bytesRead = OsRead(handle_, bytes.data(), static_cast<unsigned long>(bytes.size()));
+    if (bytesRead < 0) {
+        Close(); // Real error (usually unplugged); the game will retry opening.
         return lines;
     }
-    if (bytesRead > 0) {
-        incomingBuffer_.append(bytes.data(), bytesRead); // Preserve bytes until newline parsing.
-    }
-#else // macOS and Linux (POSIX)
-    const ssize_t bytesRead = read(handle_, bytes.data(), bytes.size());
-    if (bytesRead > 0) {
-        incomingBuffer_.append(bytes.data(), static_cast<std::size_t>(bytesRead));
-    } else if (bytesRead < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
-        Close(); // A real I/O error disconnects the port rather than blocking the game.
-        return lines;
-    }
-#endif // _WIN32
+    incomingBuffer_.append(bytes.data(), static_cast<std::size_t>(bytesRead));
 
-    std::size_t newline = incomingBuffer_.find('\n'); // Locate the first complete message.
-    while (newline != std::string::npos) {
-        std::string line = incomingBuffer_.substr(0, newline); // Extract bytes before newline.
+    // Split off every complete line.
+    std::size_t newline;
+    while ((newline = incomingBuffer_.find('\n')) != std::string::npos) {
+        std::string line = incomingBuffer_.substr(0, newline);
+        incomingBuffer_.erase(0, newline + 1);
         if (!line.empty() && line.back() == '\r') {
-            line.pop_back(); // Accept CRLF senders as well as LF-only senders.
+            line.pop_back(); // Accept Windows-style "\r\n" endings too.
         }
         if (!line.empty()) {
-            lines.push_back(std::move(line)); // Ignore blank lines, retain useful protocol events.
+            lines.push_back(line);
         }
-        incomingBuffer_.erase(0, newline + 1); // Remove this consumed line from the byte buffer.
-        newline = incomingBuffer_.find('\n'); // Continue while more complete messages are buffered.
     }
 
     if (incomingBuffer_.size() > 1024) {
-        incomingBuffer_.clear(); // Recover safely if a malformed sender never transmits newline.
+        incomingBuffer_.clear(); // Garbage with no newline: don't let it grow forever.
     }
     return lines;
 }
 
 /**
- * @brief Write a single newline-terminated command to the connected Arduino.
- * @param line Command text; an existing trailing newline is accepted.
- * @return true only when every byte was written successfully.
+ * @brief Send one command line to the Arduino, adding the newline if missing.
+ * @param line Command such as "BUZZER 900 70".
+ * @return true if sent; false (doing nothing) when no port is open, so callers
+ *         can write unconditionally in keyboard mode.
  */
 bool SerialPort::WriteLine(const std::string& line) {
     if (!IsOpen()) {
-        return false; // The caller may continue with keyboard-only gameplay.
+        return false;
     }
-    std::string message = line; // Copy the command so this method can normalize its terminator.
+    std::string message = line;
     if (message.empty() || message.back() != '\n') {
-        message.push_back('\n'); // Every protocol message ends with one line feed.
+        message.push_back('\n'); // Every protocol message ends with a newline.
     }
-
-#ifdef _WIN32 // Windows
-    DWORD bytesWritten = 0; // Win32 reports the actual number of bytes sent.
-    const HANDLE device = reinterpret_cast<HANDLE>(handle_);
-    if (!WriteFile(device, message.data(), static_cast<DWORD>(message.size()),
-                   &bytesWritten, nullptr)
-        || bytesWritten != message.size()) {
-        Close(); // A failed/partial command means the connection is no longer trustworthy.
+    if (!OsWrite(handle_, message.data(), static_cast<unsigned long>(message.size()))) {
+        Close(); // The connection is no longer trustworthy; the game will retry.
         return false;
     }
     return true;
-#else // macOS and Linux (POSIX)
-    std::size_t offset = 0; // Track progress in case the OS accepts a partial write.
-    while (offset < message.size()) { // Continue until the full short command is transmitted.
-        const ssize_t bytesWritten = write(handle_, message.data() + offset,
-                                           message.size() - offset);
-        if (bytesWritten > 0) {
-            offset += static_cast<std::size_t>(bytesWritten); // Advance past bytes already sent.
-        } else if (bytesWritten < 0 && errno == EINTR) {
-            continue; // Retry when a signal interrupted the system call.
-        } else {
-            if (bytesWritten == 0 || (errno != EAGAIN && errno != EWOULDBLOCK)) {
-                Close(); // Leave transient non-blocking backpressure available for the next command.
-            }
-            return false; // Report a partial/error write without hanging the render loop.
-        }
-    }
-    return true; // The complete command, including its newline, reached the OS driver.
-#endif // _WIN32
 }
